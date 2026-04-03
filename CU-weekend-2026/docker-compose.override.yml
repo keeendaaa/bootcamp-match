@@ -1,0 +1,8 @@
+services:
+  api:
+    volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+    environment:
+      UVICORN_RELOAD: "1"

@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+pydantic-settings
+PyJWT
+alembic
+python-multipart
+ytmusicapi
+yt-dlp

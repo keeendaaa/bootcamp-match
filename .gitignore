@@ -1,0 +1,28 @@
+# OS
+.DS_Store
+
+# Root local assets
+/photos/
+/Frame 1597880375.png
+
+# Frontend
+web-app/node_modules/
+web-app/dist/
+web-app/.env
+web-app/.env.*
+
+# Backend
+CU-weekend-2026/.venv/
+CU-weekend-2026/uploads/
+CU-weekend-2026/.env
+CU-weekend-2026/.env.*
+
+# Python
+**/__pycache__/
+**/*.pyc
+
+# Logs
+*.log
+
+# Local backup of nested repo metadata
+CU-weekend-2026/.git_backup_local/
