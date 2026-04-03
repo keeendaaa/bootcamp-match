@@ -149,13 +149,27 @@ const mapBackendSongToUiSong = (song: ApiSong, idx: number): Song => {
 
 const mapLikedTrackToSong = (track: ApiLikedTrack, idx: number): Song => {
   const base = SONGS[idx % SONGS.length];
+  let derivedStreamUrl: string | undefined = track.stream_url || undefined;
+  if (!derivedStreamUrl && track.track_key.startsWith('yt:')) {
+    const videoId = track.track_key.slice(3).trim();
+    if (videoId) derivedStreamUrl = `/music/stream/${videoId}`;
+  }
+  if (!derivedStreamUrl && track.source_url) {
+    try {
+      const parsed = new URL(track.source_url);
+      const videoId = parsed.searchParams.get('v') || '';
+      if (videoId) derivedStreamUrl = `/music/stream/${videoId}`;
+    } catch {
+      // noop
+    }
+  }
   return {
     id: 3_000_000 + idx,
     title: trimSongTitle(track.title),
     artist: track.artist || 'Unknown Artist',
     cover: track.cover_url || base.cover,
     duration: track.duration || '—',
-    streamUrl: track.stream_url || undefined,
+    streamUrl: derivedStreamUrl || base.streamUrl,
   };
 };
 
@@ -267,6 +281,8 @@ export default function App() {
   const [activeSession, setActiveSession] = useState<ApiSession | null>(null);
   const [sessionMessages, setSessionMessages] = useState<ApiSessionMessage[]>([]);
   const [currentBackendSongId, setCurrentBackendSongId] = useState<number | null>(null);
+  const [activeQueue, setActiveQueue] = useState<Song[] | null>(null);
+  const [queueIndex, setQueueIndex] = useState<number | null>(null);
   const [shuffleOn, setShuffleOn] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
   const [currentTimeSec, setCurrentTimeSec] = useState(0);
@@ -322,6 +338,28 @@ export default function App() {
   };
 
   const next = () => {
+    if (activeQueue && activeQueue.length > 0 && queueIndex !== null) {
+      let nextIdx: number;
+      if (shuffleOn && activeQueue.length > 1) {
+        do {
+          nextIdx = Math.floor(Math.random() * activeQueue.length);
+        } while (nextIdx === queueIndex);
+      } else {
+        nextIdx = (queueIndex + 1) % activeQueue.length;
+      }
+      const nextSong = activeQueue[nextIdx];
+      setQueueIndex(nextIdx);
+      const builtinIdx = SONGS.findIndex((s) => s.id === nextSong.id);
+      if (builtinIdx >= 0) {
+        setSongIndex(builtinIdx);
+        setCustomSong(null);
+      } else {
+        setCustomSong(nextSong);
+      }
+      setListeningWith(null);
+      void startPlayback(nextSong);
+      return;
+    }
     setCustomSong(null);
     let nextIdx: number;
     if (shuffleOn && SONGS.length > 1) {
@@ -336,6 +374,28 @@ export default function App() {
     void startPlayback(nextSong);
   };
   const prev = () => {
+    if (activeQueue && activeQueue.length > 0 && queueIndex !== null) {
+      let prevIdx: number;
+      if (shuffleOn && activeQueue.length > 1) {
+        do {
+          prevIdx = Math.floor(Math.random() * activeQueue.length);
+        } while (prevIdx === queueIndex);
+      } else {
+        prevIdx = (queueIndex - 1 + activeQueue.length) % activeQueue.length;
+      }
+      const prevSong = activeQueue[prevIdx];
+      setQueueIndex(prevIdx);
+      const builtinIdx = SONGS.findIndex((s) => s.id === prevSong.id);
+      if (builtinIdx >= 0) {
+        setSongIndex(builtinIdx);
+        setCustomSong(null);
+      } else {
+        setCustomSong(prevSong);
+      }
+      setListeningWith(null);
+      void startPlayback(prevSong);
+      return;
+    }
     setCustomSong(null);
     let prevIdx: number;
     if (shuffleOn && SONGS.length > 1) {
@@ -698,6 +758,8 @@ export default function App() {
           if (songChanged) {
             suppressSessionSyncRef.current = true;
             const sessionSong = mapSessionSongToUiSong(session.song);
+            setActiveQueue(null);
+            setQueueIndex(null);
             setCustomSong(sessionSong);
             await startPlayback(sessionSong);
             audio.currentTime = target;
@@ -882,6 +944,8 @@ export default function App() {
       if (mate) setListeningWith(mate);
       setNpOpen(true);
       const sessionSong = mapSessionSongToUiSong(accepted.song);
+      setActiveQueue(null);
+      setQueueIndex(null);
       setCustomSong(sessionSong);
       const audio = audioRef.current;
       if (audio) {
@@ -912,7 +976,17 @@ export default function App() {
     }
   };
 
-  const playSong = (song: Song, friend?: Friend) => {
+  const playSong = (song: Song, friend?: Friend, queue?: Song[], selectedIndex?: number) => {
+    if (queue && queue.length > 0) {
+      const resolvedIdx = typeof selectedIndex === 'number'
+        ? selectedIndex
+        : Math.max(0, queue.findIndex((s) => s.id === song.id));
+      setActiveQueue(queue);
+      setQueueIndex(Math.max(0, resolvedIdx));
+    } else {
+      setActiveQueue(null);
+      setQueueIndex(null);
+    }
     const idx = SONGS.findIndex(s => s.id === song.id);
     if (idx >= 0) {
       setSongIndex(idx);
@@ -967,7 +1041,7 @@ export default function App() {
             token={token}
             likedTrackKeys={likedTrackKeys}
             onToggleLike={toggleLike}
-            onPlay={(s) => playSong(s)}
+            onPlay={(s, queue, index) => playSong(s, undefined, queue, index)}
             onShare={(s) => setShareModal(s)}
           />
         )}
@@ -981,6 +1055,7 @@ export default function App() {
             onToggleLike={toggleLike}
             onUploadAvatar={uploadAvatar}
             onUpdateTag={updateMyTag}
+            onPlay={(s) => playSong(s)}
           />
         )}
       </div>
@@ -1387,7 +1462,7 @@ function DiscoverScreen({
   token: string;
   likedTrackKeys: Set<string>;
   onToggleLike: (song: Song) => Promise<boolean>;
-  onPlay: (s: Song) => void;
+  onPlay: (s: Song, queue?: Song[], index?: number) => void;
   onShare: (s: Song) => void;
 }) {
   const [query, setQuery] = useState('');
@@ -1460,10 +1535,10 @@ function DiscoverScreen({
         <h3 className="section-title">В тренде</h3>
         <button className="section-more">Ещё <ChevronRight size={16} /></button>
       </div>
-      {list.map((song) => (
+      {list.map((song, idx) => (
         <div className="trending-item" key={song.id}>
-          <img src={song.cover} alt="" onClick={() => onPlay(song)} />
-          <div className="trending-info" onClick={() => onPlay(song)}>
+          <img src={song.cover} alt="" onClick={() => onPlay(song, list, idx)} />
+          <div className="trending-info" onClick={() => onPlay(song, list, idx)}>
             <h4>{song.title}</h4>
             <p>{song.artist} · {song.duration}</p>
           </div>
@@ -1476,7 +1551,7 @@ function DiscoverScreen({
             <Heart size={16} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
           </motion.button>
           <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
-          <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song)}>
+          <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
             <Play size={14} fill="#fff" />
           </button>
         </div>
@@ -1612,6 +1687,7 @@ function ProfileScreen({
   onToggleLike,
   onUploadAvatar,
   onUpdateTag,
+  onPlay,
 }: {
   currentUser: ApiUser;
   stats: ApiProfileStats;
@@ -1620,6 +1696,7 @@ function ProfileScreen({
   onToggleLike: (song: Song) => Promise<boolean>;
   onUploadAvatar: (file: File) => Promise<void>;
   onUpdateTag: (tag: string) => Promise<void>;
+  onPlay: (song: Song) => void;
 }) {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const [tagInput, setTagInput] = useState(currentUser.tag || '');
@@ -1687,17 +1764,26 @@ function ProfileScreen({
       </div>
       <div className="section-header"><h3 className="section-title">Лайкнутые треки</h3></div>
       {likedSongs.slice(0, 20).map((song) => (
-        <div className="trending-item" key={song.id}>
+        <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
           <img src={song.cover} alt="" />
           <div className="trending-info"><h4>{song.title}</h4><p>{song.artist} · {song.duration}</p></div>
           <motion.button
             className="icon-btn glass-btn-sm"
-            onClick={() => void onToggleLike(song)}
+            onClick={(e) => {
+              e.stopPropagation();
+              void onToggleLike(song);
+            }}
             animate={likedTrackKeys.has(trackKeyOfSong(song)) ? { scale: [1, 1.18, 1] } : { scale: 1 }}
             transition={{ duration: 0.28 }}
           >
             <Heart size={18} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
           </motion.button>
+          <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
+            e.stopPropagation();
+            onPlay(song);
+          }}>
+            <Play size={14} fill="#fff" />
+          </button>
         </div>
       ))}
       {likedSongs.length === 0 && <div className="search-status">Пока нет лайков</div>}
