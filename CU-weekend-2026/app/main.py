@@ -698,10 +698,14 @@ def create_listen_invite(
     if not is_friend(db, current_user.id, payload.friend_id):
         raise HTTPException(status_code=403, detail="Not friends")
 
+    host_id = payload.friend_id if payload.as_guest else current_user.id
+    guest_id = current_user.id if payload.as_guest else payload.friend_id
+    initial_status = "active" if payload.as_guest else "pending"
+
     existing = (
         db.query(ListenSession)
-        .filter(ListenSession.host_id == current_user.id)
-        .filter(ListenSession.guest_id == payload.friend_id)
+        .filter(ListenSession.host_id == host_id)
+        .filter(ListenSession.guest_id == guest_id)
         .filter(ListenSession.status.in_(["pending", "active"]))
         .order_by(ListenSession.id.desc())
         .first()
@@ -710,15 +714,17 @@ def create_listen_invite(
         existing.song_id = payload.song_id
         existing.position_sec = max(0, int(payload.position_sec))
         existing.is_playing = payload.is_playing
+        if payload.as_guest:
+            existing.status = "active"
         db.commit()
         db.refresh(existing)
         return session_to_public(existing, db)
 
     session = ListenSession(
-        host_id=current_user.id,
-        guest_id=payload.friend_id,
+        host_id=host_id,
+        guest_id=guest_id,
         song_id=payload.song_id,
-        status="pending",
+        status=initial_status,
         position_sec=max(0, int(payload.position_sec)),
         is_playing=payload.is_playing,
     )

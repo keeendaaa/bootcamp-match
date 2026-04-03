@@ -169,7 +169,7 @@ const mapLikedTrackToSong = (track: ApiLikedTrack, idx: number): Song => {
     artist: track.artist || 'Unknown Artist',
     cover: track.cover_url || base.cover,
     duration: track.duration || '—',
-    streamUrl: derivedStreamUrl || base.streamUrl,
+    streamUrl: derivedStreamUrl,
   };
 };
 
@@ -915,12 +915,24 @@ export default function App() {
     }
   };
 
-  const inviteToListen = async (friendId: number, songId: number | null, positionSec: number, isPlayingNow: boolean) => {
+  const inviteToListen = async (
+    friendId: number,
+    songId: number | null,
+    positionSec: number,
+    isPlayingNow: boolean,
+    asGuest: boolean = false
+  ) => {
     if (!token) return;
     try {
       const session = await apiRequest<ApiSession>('/listen/invite', {
         method: 'POST',
-        body: JSON.stringify({ friend_id: friendId, song_id: songId, position_sec: Math.max(0, Math.floor(positionSec)), is_playing: isPlayingNow }),
+        body: JSON.stringify({
+          friend_id: friendId,
+          song_id: songId,
+          position_sec: Math.max(0, Math.floor(positionSec)),
+          is_playing: isPlayingNow,
+          as_guest: asGuest,
+        }),
       }, token);
       setActiveSession(session);
       setCurrentBackendSongId(session.song?.id ?? songId ?? null);
@@ -976,6 +988,23 @@ export default function App() {
     }
   };
 
+  const leaveSession = async () => {
+    if (!token || !activeSession) return;
+    try {
+      await apiRequest<ApiSession>(`/listen/${activeSession.id}/end`, { method: 'POST' }, token);
+    } catch {
+      // noop
+    } finally {
+      setActiveSession(null);
+      setListeningWith(null);
+      setSessionMessages([]);
+      lastMessageIdRef.current = 0;
+      setCurrentBackendSongId(null);
+      setActiveQueue(null);
+      setQueueIndex(null);
+    }
+  };
+
   const playSong = (song: Song, friend?: Friend, queue?: Song[], selectedIndex?: number) => {
     if (queue && queue.length > 0) {
       const resolvedIdx = typeof selectedIndex === 'number'
@@ -1003,7 +1032,7 @@ export default function App() {
       if (created?.id) setCurrentBackendSongId(created.id);
       if (friend) {
         const currentPos = audioRef.current?.currentTime || 0;
-        await inviteToListen(friend.id, created?.id ?? null, currentPos, true);
+        await inviteToListen(friend.id, created?.id ?? null, currentPos, true, true);
       }
     })();
   };
@@ -1104,6 +1133,7 @@ export default function App() {
             sessionActive={Boolean(activeSession)}
             sessionMessages={sessionMessages}
             onSendSessionMessage={sendSessionMessage}
+            onLeaveSession={leaveSession}
             onShare={() => setShareModal(currentSong)}
           />
         )}
@@ -1816,7 +1846,7 @@ function BottomNav({ tab, onChangeTab }: { tab: Tab; onChangeTab: (t: Tab) => vo
 }
 
 /* ========== NOW PLAYING FULLSCREEN (with scrollable chat) ========== */
-function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked, shuffleOn, repeatMode, listeningWith, onClose, onToggle, onNext, onPrev, onSeek, onToggleLike, onToggleShuffle, onCycleRepeat, currentUserId, sessionActive, sessionMessages, onSendSessionMessage, onShare }: {
+function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked, shuffleOn, repeatMode, listeningWith, onClose, onToggle, onNext, onPrev, onSeek, onToggleLike, onToggleShuffle, onCycleRepeat, currentUserId, sessionActive, sessionMessages, onSendSessionMessage, onLeaveSession, onShare }: {
   song: Song;
   isPlaying: boolean;
   currentTimeSec: number;
@@ -1837,6 +1867,7 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
   sessionActive: boolean;
   sessionMessages: ApiSessionMessage[];
   onSendSessionMessage: (text: string) => Promise<void>;
+  onLeaveSession: () => Promise<void>;
   onShare: () => void;
 }) {
   const trackRef = useRef<HTMLDivElement | null>(null);
@@ -1873,7 +1904,13 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
             <p className="np-with">🎧 с {listeningWith.name}</p>
           )}
         </div>
+        {sessionActive ? (
+          <button className="np-icon-btn" onClick={() => void onLeaveSession()} title="Выйти из совместного прослушивания">
+            <X size={20} />
+          </button>
+        ) : (
         <button className="np-icon-btn" onClick={onShare}><Share2 size={20} /></button>
+        )}
       </div>
 
       {/* Scrollable content */}

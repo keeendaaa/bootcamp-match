@@ -33,12 +33,12 @@ export interface ChatThread {
 }
 
 export const SONGS: Song[] = [
-  { id: 1, title: 'Blinding Lights', artist: 'The Weeknd', cover: '/covers/cover1.jpg', duration: '3:20', streamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3' },
-  { id: 2, title: 'Levitating', artist: 'Dua Lipa', cover: '/covers/cover2.jpg', duration: '3:23', streamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3' },
-  { id: 3, title: 'Peaches', artist: 'Justin Bieber', cover: '/covers/cover3.jpg', duration: '3:18', streamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3' },
-  { id: 4, title: 'Stay', artist: 'The Kid LAROI', cover: '/covers/cover4.jpg', duration: '2:21', streamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3' },
-  { id: 5, title: 'Heat Waves', artist: 'Glass Animals', cover: '/covers/cover5.jpg', duration: '3:58', streamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3' },
-  { id: 6, title: 'good 4 u', artist: 'Olivia Rodrigo', cover: '/covers/cover6.jpg', duration: '2:58', streamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3' },
+  { id: 1, title: 'Blinding Lights', artist: 'The Weeknd', cover: '/covers/cover1.jpg', duration: '3:20' },
+  { id: 2, title: 'Levitating', artist: 'Dua Lipa', cover: '/covers/cover2.jpg', duration: '3:23' },
+  { id: 3, title: 'Peaches', artist: 'Justin Bieber', cover: '/covers/cover3.jpg', duration: '3:18' },
+  { id: 4, title: 'Stay', artist: 'The Kid LAROI', cover: '/covers/cover4.jpg', duration: '2:21' },
+  { id: 5, title: 'Heat Waves', artist: 'Glass Animals', cover: '/covers/cover5.jpg', duration: '3:58' },
+  { id: 6, title: 'good 4 u', artist: 'Olivia Rodrigo', cover: '/covers/cover6.jpg', duration: '2:58' },
 ];
 
 export const FRIENDS: Friend[] = [

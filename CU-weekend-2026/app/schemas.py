@@ -123,6 +123,7 @@ class SessionInviteCreate(BaseModel):
     song_id: int | None = None
     position_sec: int = 0
     is_playing: bool = False
+    as_guest: bool = False
 
 
 class SessionStateUpdate(BaseModel):
