@@ -101,6 +101,13 @@ type ApiPodcastSearchItem = {
   source_url?: string | null;
   stream_url?: string | null;
 };
+type ApiPodcastEpisodeItem = {
+  episode_id: string;
+  title: string;
+  duration?: string | null;
+  published_at?: string | null;
+  stream_url: string;
+};
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'https://matchapp.site/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
@@ -571,16 +578,67 @@ export default function App() {
     return normalizePlayableUrl(song.streamUrl) || null;
   };
 
+  const resolveFreshPodcastSong = async (song: Song): Promise<Song | null> => {
+    const rawStream = song.streamUrl || '';
+    if (!rawStream.includes('/podcasts/stream/')) return null;
+
+    const query = `${song.title} ${song.artist}`.trim();
+    if (!query) return null;
+
+    try {
+      const accessToken = isDemoMode ? undefined : tokenRef.current || undefined;
+      const podcasts = await apiRequest<ApiPodcastSearchItem[]>(
+        `/podcasts/search?q=${encodeURIComponent(query)}&limit=8`,
+        {},
+        accessToken
+      );
+      if (!podcasts.length) return null;
+
+      const norm = (v: string) => v.toLowerCase().replace(/\s+/g, ' ').trim();
+      const artistNeedle = norm(song.artist || '');
+      const podcast =
+        podcasts.find((p) => artistNeedle && norm(p.artist || '').includes(artistNeedle)) ||
+        podcasts[0];
+      if (!podcast?.podcast_id) return null;
+
+      const episodes = await apiRequest<ApiPodcastEpisodeItem[]>(
+        `/podcasts/${encodeURIComponent(podcast.podcast_id)}/episodes?limit=20`,
+        {},
+        accessToken
+      );
+      if (!episodes.length) return null;
+
+      const titleNeedle = norm(song.title || '');
+      const episode =
+        episodes.find((ep) => titleNeedle && norm(ep.title || '').includes(titleNeedle)) ||
+        episodes[0];
+      if (!episode?.stream_url) return null;
+
+      return {
+        ...song,
+        title: episode.title || song.title,
+        artist: podcast.artist || song.artist,
+        cover: podcast.cover_url || song.cover,
+        duration: episode.duration || song.duration,
+        streamUrl: episode.stream_url,
+      };
+    } catch (err) {
+      debugLog('resolveFreshPodcastSong failed', err);
+      return null;
+    }
+  };
+
   const startPlayback = async (song: Song) => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    const streamUrl = resolveStreamUrl(song);
+    let playbackSong = song;
+    let streamUrl = resolveStreamUrl(playbackSong);
     debugLog('startPlayback called', {
-      songId: song.id,
-      title: song.title,
-      artist: song.artist,
-      rawStreamUrl: song.streamUrl,
+      songId: playbackSong.id,
+      title: playbackSong.title,
+      artist: playbackSong.artist,
+      rawStreamUrl: playbackSong.streamUrl,
       resolvedStreamUrl: streamUrl,
       isDemoMode,
     });
@@ -603,7 +661,22 @@ export default function App() {
         contentType: probe.headers.get('content-type'),
       });
       if (!probe.ok) {
-        setPlayerError('Поток недоступен');
+        const maybeRefreshed = await resolveFreshPodcastSong(playbackSong);
+        if (maybeRefreshed) {
+          playbackSong = maybeRefreshed;
+          streamUrl = resolveStreamUrl(playbackSong);
+          if (streamUrl) {
+            selectSongInPlayer(playbackSong);
+          } else {
+            setPlayerError('Поток недоступен');
+            setIsPlaying(false);
+            return;
+          }
+        } else {
+          setPlayerError('Поток недоступен');
+          setIsPlaying(false);
+          return;
+        }
       }
     } catch (err) {
       debugLog('stream probe failed', err);
@@ -611,6 +684,11 @@ export default function App() {
     if (clearNowPlayingTimerRef.current) {
       clearTimeout(clearNowPlayingTimerRef.current);
       clearNowPlayingTimerRef.current = null;
+    }
+    if (!streamUrl) {
+      setPlayerError('Поток недоступен');
+      setIsPlaying(false);
+      return;
     }
     if (audio.src !== streamUrl) {
       audio.src = streamUrl;
@@ -2674,17 +2752,101 @@ function DiscoverScreen({
   onEnqueue: (song: Song) => void;
   onShare: (s: Song) => void;
 }) {
+<<<<<<< HEAD
   type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string };
   const [section, setSection] = useState<'music' | 'podcasts'>('music');
+=======
+  type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string; podcastId?: string };
+  const TRACK_TAG_QUERY_MAP: Record<string, string> = {
+    'Поп': 'pop hits',
+    'Рок': 'rock hits',
+    'Хип-хоп': 'hip hop',
+    'R&B': 'r&b',
+    'Электроника': 'electronic',
+    'Инди': 'indie',
+  };
+  const PODCAST_TAG_QUERY_MAP: Record<string, string> = {
+    'Технологии': 'technology podcast',
+    'Стартапы': 'startup podcast',
+    'Интервью': 'interview podcast',
+    'Карьера': 'career podcast',
+    'Психология': 'psychology podcast',
+    'Бизнес': 'business podcast',
+  };
+  const [mode, setMode] = useState<'tracks' | 'podcasts'>('tracks');
+  const [activeTag, setActiveTag] = useState('');
+>>>>>>> main
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [remoteSongs, setRemoteSongs] = useState<DiscoverItem[]>([]);
   const [hasRemoteLoaded, setHasRemoteLoaded] = useState(false);
+  const [episodesPodcast, setEpisodesPodcast] = useState<DiscoverItem | null>(null);
+  const [episodes, setEpisodes] = useState<Song[]>([]);
+  const [episodesLoading, setEpisodesLoading] = useState(false);
+  const [episodesError, setEpisodesError] = useState('');
+  const [showAll, setShowAll] = useState(false);
+  const searchCacheRef = useRef<Map<string, { ts: number; items: DiscoverItem[] }>>(new Map());
+  const podcastEpisodesCacheRef = useRef<Map<string, { ts: number; items: Song[] }>>(new Map());
+  const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 
   useEffect(() => {
     setRemoteSongs([]);
     setHasRemoteLoaded(false);
+<<<<<<< HEAD
   }, [section]);
+=======
+    setShowAll(false);
+    setActiveTag('');
+  }, [mode]);
+>>>>>>> main
+
+  useEffect(() => {
+    setShowAll(false);
+    setActiveTag('');
+  }, [query]);
+
+  const openPodcastEpisodes = async (podcast: DiscoverItem) => {
+    setEpisodesPodcast(podcast);
+    setEpisodes([]);
+    setEpisodesError('');
+    setEpisodesLoading(true);
+    try {
+      const accessToken = isDemoMode ? undefined : token;
+      const cacheKey = podcast.podcastId || `${podcast.title}|${podcast.artist}`;
+      const cached = podcastEpisodesCacheRef.current.get(cacheKey);
+      if (cached && Date.now() - cached.ts < SEARCH_CACHE_TTL_MS) {
+        setEpisodes(cached.items);
+        return;
+      }
+      if (podcast.podcastId) {
+        const response = await apiRequest<ApiPodcastEpisodeItem[]>(
+          `/podcasts/${encodeURIComponent(podcast.podcastId)}/episodes?limit=30`,
+          {},
+          accessToken
+        );
+        const mapped = response.map((ep, idx) => ({
+          id: 9_000_000 + idx,
+          title: trimSongTitle(ep.title),
+          artist: podcast.artist,
+          cover: podcast.cover,
+          duration: ep.duration || ep.published_at || 'Эпизод',
+          streamUrl: ep.stream_url,
+        }));
+        setEpisodes(mapped);
+        podcastEpisodesCacheRef.current.set(cacheKey, { ts: Date.now(), items: mapped });
+      } else if (podcast.streamUrl) {
+        const single = [{ ...podcast }];
+        setEpisodes(single);
+        podcastEpisodesCacheRef.current.set(cacheKey, { ts: Date.now(), items: single });
+      } else {
+        setEpisodesError('Не удалось получить список выпусков');
+      }
+    } catch (err) {
+      setEpisodesError(formatUserFacingError(err, 'Не удалось загрузить выпуски подкаста'));
+    } finally {
+      setEpisodesLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!token && !isDemoMode) {
@@ -2694,7 +2856,22 @@ function DiscoverScreen({
       return;
     }
     const trimmed = query.trim();
+<<<<<<< HEAD
     const effectiveQuery = trimmed.length >= 2 ? trimmed : section === 'podcasts' ? 'top podcasts' : 'top hits';
+=======
+    const effectiveTagQuery = activeTag
+      ? (mode === 'podcasts' ? PODCAST_TAG_QUERY_MAP[activeTag] : TRACK_TAG_QUERY_MAP[activeTag]) || activeTag
+      : '';
+    const effectiveQuery = effectiveTagQuery || (trimmed.length >= 2 ? trimmed : mode === 'podcasts' ? 'top podcasts' : 'top hits');
+    const cacheKey = `${mode}::${effectiveQuery.toLowerCase()}`;
+    const cached = searchCacheRef.current.get(cacheKey);
+    if (cached && Date.now() - cached.ts < SEARCH_CACHE_TTL_MS) {
+      setLoading(false);
+      setRemoteSongs(cached.items);
+      setHasRemoteLoaded(true);
+      return;
+    }
+>>>>>>> main
 
     let cancelled = false;
     const timer = setTimeout(async () => {
@@ -2717,6 +2894,7 @@ function DiscoverScreen({
             streamUrl: item.stream_url || undefined,
             isPodcast: true,
             externalUrl: item.source_url || undefined,
+            podcastId: item.podcast_id,
           }));
         } else {
           const accessToken = isDemoMode ? undefined : token;
@@ -2736,6 +2914,7 @@ function DiscoverScreen({
           }));
         }
         if (cancelled) return;
+        searchCacheRef.current.set(cacheKey, { ts: Date.now(), items: mapped });
         setRemoteSongs(mapped);
         setHasRemoteLoaded(true);
       } catch (err) {
@@ -2756,13 +2935,22 @@ function DiscoverScreen({
       cancelled = true;
       clearTimeout(timer);
     };
+<<<<<<< HEAD
   }, [query, token, isDemoMode, section]);
+=======
+  }, [query, token, isDemoMode, mode, activeTag]);
+>>>>>>> main
 
   const fallbackList: DiscoverItem[] =
     section === 'podcasts'
       ? PODCASTS.map((item) => ({ ...item, isPodcast: true }))
       : SONGS.map((item) => ({ ...item, isPodcast: false }));
   const list = hasRemoteLoaded ? remoteSongs : fallbackList;
+<<<<<<< HEAD
+=======
+  const visibleList = showAll ? list : list.slice(0, 8);
+  const tags = mode === 'podcasts' ? PODCAST_TAGS : TRENDING_TAGS;
+>>>>>>> main
 
   return (
     <>
@@ -2852,7 +3040,10 @@ function DiscoverScreen({
         <input
           placeholder={section === 'podcasts' ? 'Поиск подкастов...' : 'Поиск треков и артистов...'}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setActiveTag('');
+            setQuery(e.target.value);
+          }}
         />
       </div>
       {loading && (
@@ -2864,22 +3055,51 @@ function DiscoverScreen({
       {!loading && list.length === 0 && (
         <div className="search-status">Ничего не найдено</div>
       )}
+<<<<<<< HEAD
       <div className="section-header">
         <h3 className="section-title">{section === 'music' ? 'Музыка' : 'Подкасты'}</h3>
         <button className="section-more">Ещё <ChevronRight size={16} /></button>
+=======
+      <div className="tag-row">
+        {tags.map((tag) => (
+          <button
+            className={`tag-chip ${activeTag === tag ? 'active' : ''}`}
+            key={tag}
+            onClick={() => setActiveTag((prev) => (prev === tag ? '' : tag))}
+          >
+            {tag}
+          </button>
+        ))}
       </div>
-      {list.map((song, idx) => (
+      <div className="section-header">
+        <h3 className="section-title">{mode === 'podcasts' ? 'Популярные подкасты' : 'В тренде'}</h3>
+        {list.length > 8 && (
+          <button className="section-more" onClick={() => setShowAll((v) => !v)}>
+            {showAll ? 'Свернуть' : 'Ещё'} <ChevronRight size={16} />
+          </button>
+        )}
+>>>>>>> main
+      </div>
+      {visibleList.map((song, idx) => (
         <div className="trending-item" key={song.id}>
           <img
             src={song.cover}
             alt=""
             onClick={() => {
+              if (song.isPodcast) {
+                void openPodcastEpisodes(song);
+                return;
+              }
               onPlay(song, list, idx);
             }}
           />
           <div
             className="trending-info"
             onClick={() => {
+              if (song.isPodcast) {
+                void openPodcastEpisodes(song);
+                return;
+              }
               onPlay(song, list, idx);
             }}
           >
@@ -2887,6 +3107,7 @@ function DiscoverScreen({
             <p>{song.artist} · {song.duration}</p>
           </div>
           {song.isPodcast ? (
+<<<<<<< HEAD
             <>
               <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
               <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
@@ -2894,6 +3115,11 @@ function DiscoverScreen({
                 <Play size={14} fill="#fff" />
               </button>
             </>
+=======
+            <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => void openPodcastEpisodes(song)} title="Выбрать выпуск">
+              <Play size={14} fill="#fff" />
+            </button>
+>>>>>>> main
           ) : (
             <>
               <motion.button
@@ -2913,6 +3139,55 @@ function DiscoverScreen({
           )}
         </div>
       ))}
+      <AnimatePresence>
+        {episodesPodcast && (
+          <motion.div
+            className="share-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setEpisodesPodcast(null)}
+          >
+            <motion.div
+              className="share-sheet podcast-episodes-sheet glass-panel"
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', bounce: 0.12 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="share-header">
+                <h3>Выпуски: {episodesPodcast.title}</h3>
+                <button className="icon-btn glass-btn-sm" onClick={() => setEpisodesPodcast(null)}><X size={18} /></button>
+              </div>
+              {episodesLoading && <div className="search-status">Загружаем выпуски...</div>}
+              {!episodesLoading && episodesError && <div className="auth-error">{episodesError}</div>}
+              {!episodesLoading && !episodesError && episodes.length === 0 && (
+                <div className="search-status">Доступных выпусков пока нет</div>
+              )}
+              {!episodesLoading && episodes.map((episode, epIdx) => (
+                <div
+                  className="trending-item podcast-episode-item"
+                  key={`${episode.id}-${epIdx}`}
+                  onClick={() => {
+                    onPlay(episode, episodes, epIdx);
+                    setEpisodesPodcast(null);
+                  }}
+                >
+                  <img src={episode.cover} alt="" />
+                  <div className="trending-info">
+                    <h4>{episode.title}</h4>
+                    <p>{episode.artist} · {episode.duration}</p>
+                  </div>
+                  <button className="play-btn-sm" style={{ width: 32, height: 32 }}>
+                    <Play size={14} fill="#fff" />
+                  </button>
+                </div>
+              ))}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 }

@@ -591,6 +591,12 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   box-shadow: 0 4px 12px var(--purple-glow);
 }
 .tag-chip:hover { background: var(--purple-pale); color: var(--purple-main); }
+.tag-chip.active {
+  background: var(--purple-main);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 4px 12px var(--purple-glow);
+}
 
 .trending-item { display: flex; align-items: center; padding: 10px 24px; gap: 14px; cursor: pointer; }
 .trending-item:hover { background: var(--surface-hover); }
@@ -1072,6 +1078,11 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   color: #142038;
 }
 .friend-profile-sheet { max-height: 88%; }
+.podcast-episodes-sheet { max-height: 86%; }
+.podcast-episode-item {
+  padding-left: 0;
+  padding-right: 0;
+}
 
 .share-header {
   display: flex;

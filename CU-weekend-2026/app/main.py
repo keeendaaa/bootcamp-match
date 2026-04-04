@@ -2,6 +2,8 @@ import os
 import re
 import shutil
 import uuid
+import base64
+import time
 from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 from urllib.parse import urlparse
@@ -31,6 +33,7 @@ from .schemas import (
     LikedTrackUpsert,
     LikeToggleResponse,
     MusicSearchItem,
+    PodcastEpisodeItem,
     PodcastSearchItem,
     NowPlayingResponse,
     NowPlayingUpdate,
@@ -52,7 +55,13 @@ app = FastAPI(title="CU Weekend MVP API")
 ytmusic = YTMusic()
 STREAM_CACHE: dict[str, tuple[str, dict[str, str]]] = {}
 PODCAST_STREAM_CACHE: dict[str, str] = {}
+PODCAST_SEARCH_CACHE: dict[str, tuple[float, list[PodcastSearchItem]]] = {}
+PODCAST_LOOKUP_CACHE: dict[str, tuple[float, str]] = {}
+PODCAST_EPISODES_CACHE: dict[str, tuple[float, list[PodcastEpisodeItem]]] = {}
 NOW_PLAYING_TTL_SECONDS = 40
+PODCAST_SEARCH_TTL_SECONDS = 300
+PODCAST_LOOKUP_TTL_SECONDS = 600
+PODCAST_EPISODES_TTL_SECONDS = 300
 VOICE_WS_CONNECTIONS: dict[int, dict[int, set[WebSocket]]] = {}
 PODCAST_PROXY_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -395,6 +404,63 @@ def parse_episode_audio(feed_url: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def encode_stream_token(url: str) -> str:
+    raw = url.encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_stream_token(token: str) -> str | None:
+    try:
+        padding = "=" * (-len(token) % 4)
+        raw = base64.urlsafe_b64decode((token + padding).encode("ascii"))
+        url = raw.decode("utf-8")
+    except Exception:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    return url
+
+
+def parse_feed_episodes(feed_url: str, limit: int) -> list[PodcastEpisodeItem]:
+    try:
+        resp = requests.get(feed_url, timeout=15)
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to load podcast feed: {exc}")
+
+    episodes: list[PodcastEpisodeItem] = []
+    for item in root.findall(".//item"):
+        enclosure = item.find("enclosure")
+        if enclosure is None:
+            continue
+        audio_url = enclosure.get("url")
+        if not audio_url:
+            continue
+        if not (audio_url.startswith("http://") or audio_url.startswith("https://")):
+            continue
+
+        episode_title = (item.findtext("title") or "Episode").strip()
+        duration_raw = item.findtext("{http://www.itunes.com/dtds/podcast-1.0.dtd}duration")
+        pub_date = item.findtext("pubDate")
+
+        stream_token = encode_stream_token(audio_url)
+        PODCAST_STREAM_CACHE[stream_token] = audio_url
+        episodes.append(
+            PodcastEpisodeItem(
+                episode_id=stream_token,
+                title=episode_title,
+                duration=duration_raw.strip() if duration_raw else None,
+                published_at=pub_date.strip() if pub_date else None,
+                stream_url=f"/podcasts/stream/{stream_token}",
+            )
+        )
+        if len(episodes) >= limit:
+            break
+    return episodes
+
+
 @app.get("/music/stream/{video_id}")
 def stream_music(
     video_id: str,
@@ -448,6 +514,12 @@ def search_podcasts(
     q: str = Query(min_length=2, max_length=120),
     limit: int = Query(default=10, ge=1, le=20),
 ) -> list[PodcastSearchItem]:
+    cache_key = f"{q.strip().lower()}::{limit}"
+    now = time.time()
+    cached = PODCAST_SEARCH_CACHE.get(cache_key)
+    if cached and cached[0] > now:
+        return cached[1]
+
     endpoint = (
         "https://itunes.apple.com/search"
         f"?term={q}&entity=podcast&limit={limit}&country=US"
@@ -465,30 +537,65 @@ def search_podcasts(
         feed_url = row.get("feedUrl")
         if not feed_url:
             continue
-        audio_url, episode_duration = parse_episode_audio(feed_url)
-        if not audio_url:
-            continue
-
-        stream_id = uuid.uuid4().hex
-        PODCAST_STREAM_CACHE[stream_id] = audio_url
         episode_count = row.get("trackCount")
-        duration_label = episode_duration or (f"Эпизодов: {episode_count}" if episode_count else "Подкаст")
+        duration_label = f"Эпизодов: {episode_count}" if episode_count else "Подкаст"
 
         items.append(
             PodcastSearchItem(
-                podcast_id=str(row.get("trackId") or stream_id),
+                podcast_id=str(row.get("trackId") or uuid.uuid4().hex),
                 title=row.get("trackName") or row.get("collectionName") or "Podcast",
                 artist=row.get("artistName") or "Podcast",
                 duration=duration_label,
                 cover_url=row.get("artworkUrl600") or row.get("artworkUrl100"),
                 source_url=row.get("trackViewUrl") or row.get("collectionViewUrl"),
-                stream_url=f"/podcasts/stream/{stream_id}",
+                stream_url=None,
             )
         )
         if len(items) >= limit:
             break
 
+    PODCAST_SEARCH_CACHE[cache_key] = (now + PODCAST_SEARCH_TTL_SECONDS, items)
     return items
+
+
+@app.get("/podcasts/{podcast_id}/episodes", response_model=list[PodcastEpisodeItem])
+def podcast_episodes(
+    podcast_id: str,
+    limit: int = Query(default=20, ge=1, le=50),
+) -> list[PodcastEpisodeItem]:
+    now = time.time()
+    episodes_cache_key = f"{podcast_id}::{limit}"
+    cached_eps = PODCAST_EPISODES_CACHE.get(episodes_cache_key)
+    if cached_eps and cached_eps[0] > now:
+        return cached_eps[1]
+
+    cached_lookup = PODCAST_LOOKUP_CACHE.get(podcast_id)
+    feed_url: str | None = None
+    if cached_lookup and cached_lookup[0] > now:
+        feed_url = cached_lookup[1]
+    else:
+        lookup_url = f"https://itunes.apple.com/lookup?id={podcast_id}"
+        try:
+            resp = requests.get(lookup_url, timeout=12)
+            resp.raise_for_status()
+            payload = resp.json()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Podcast lookup failed: {exc}")
+
+        results = payload.get("results") or []
+        if not results:
+            raise HTTPException(status_code=404, detail="Podcast not found")
+
+        feed_url = results[0].get("feedUrl")
+        if not feed_url:
+            raise HTTPException(status_code=404, detail="Podcast feed not found")
+        PODCAST_LOOKUP_CACHE[podcast_id] = (now + PODCAST_LOOKUP_TTL_SECONDS, feed_url)
+
+    episodes = parse_feed_episodes(feed_url, limit)
+    if not episodes:
+        raise HTTPException(status_code=404, detail="No episodes found")
+    PODCAST_EPISODES_CACHE[episodes_cache_key] = (now + PODCAST_EPISODES_TTL_SECONDS, episodes)
+    return episodes
 
 
 @app.get("/podcasts/stream/{stream_id}")
@@ -497,6 +604,10 @@ def stream_podcast(
     request: Request,
 ) -> StreamingResponse:
     target_url = PODCAST_STREAM_CACHE.get(stream_id)
+    if not target_url:
+        target_url = decode_stream_token(stream_id)
+        if target_url:
+            PODCAST_STREAM_CACHE[stream_id] = target_url
     if not target_url:
         raise HTTPException(status_code=404, detail="Podcast stream not found")
 

@@ -128,6 +128,14 @@ class PodcastSearchItem(BaseModel):
     stream_url: str | None = None
 
 
+class PodcastEpisodeItem(BaseModel):
+    episode_id: str
+    title: str
+    duration: str | None = None
+    published_at: str | None = None
+    stream_url: str
+
+
 class SessionInviteCreate(BaseModel):
     friend_id: int
     song_id: int | None = None
