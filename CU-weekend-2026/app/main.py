@@ -507,6 +507,24 @@ def list_my_likes(
     ]
 
 
+@app.get("/me/songs", response_model=list[SongPublic])
+def list_my_songs(
+    uploaded_only: bool = Query(default=False),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[SongPublic]:
+    query = (
+        db.query(Song)
+        .filter(Song.user_id == current_user.id)
+    )
+
+    if uploaded_only:
+        query = query.filter(Song.url.contains("/files/"))
+
+    songs = query.order_by(Song.id.desc()).all()
+    return [song_to_public(song) for song in songs]
+
+
 @app.post("/me/likes/toggle", response_model=LikeToggleResponse)
 def toggle_like(
     payload: LikedTrackUpsert,

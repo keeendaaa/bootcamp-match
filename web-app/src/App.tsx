@@ -9,6 +9,14 @@ import {
   Mic, MicOff, X
 } from 'lucide-react';
 import { SONGS, FRIENDS, TRENDING_TAGS, type Song, type Friend, type ChatThread } from './data/mockData';
+import { listenForAppUrls } from './mobile/capacitor';
+import {
+  clearHandledWidgetParams,
+  getInitialWidgetOpenRequest,
+  parseWidgetOpenRequest,
+  type WidgetOpenRequest,
+} from './mobile/deepLinks';
+import { publishFriendsWidgetSnapshot } from './mobile/widgetBridge';
 import './index.css';
 
 type Tab = 'friends' | 'discover' | 'chat' | 'profile';
@@ -69,6 +77,8 @@ const API_ORIGIN = API_BASE.replace(/\/api$/, '');
 const AUTH_STORAGE_KEY = 'match_backend_token';
 const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksandr.jpg', '/avatars/galya.jpg'];
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
+const FRIENDS_POLL_INTERVAL_MS = 12_000;
+const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 30_000;
 
 const toUsername = (name: string) =>
   `@${name.toLowerCase().replace(/[^a-zа-я0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'user'}`;
@@ -193,6 +203,16 @@ const mapSessionSongToUiSong = (song: ApiSong): Song => {
   };
 };
 
+const mapUploadedSongToUiSong = (song: ApiSong, fallbackName?: string): Song => {
+  const mapped = mapSessionSongToUiSong(song);
+  return {
+    ...mapped,
+    title: trimSongTitle(song.title || titleFromUrl(song.url, fallbackName || `Трек #${song.id}`)),
+    artist: song.artist || 'Вы',
+    duration: song.duration || 'Локальный файл',
+  };
+};
+
 const getSessionTargetSec = (session: ApiSession): number => {
   const base = Math.max(0, session.position_sec || 0);
   if (!session.is_playing || !session.updated_at) return base;
@@ -211,6 +231,15 @@ const buildThreadsFromFriends = (friends: Friend[]): ChatThread[] =>
       ...(friend.currentSong ? [{ id: i * 10 + 2, senderId: friend.id, text: '', time: 'Недавно', songShare: friend.currentSong }] : []),
     ],
   }));
+
+const buildFallbackThread = (friend: Friend): ChatThread => ({
+  friend,
+  unread: 0,
+  messages: [
+    { id: Date.now(), senderId: friend.id, text: 'Открыли чат из виджета.', time: 'Сейчас' },
+    ...(friend.currentSong ? [{ id: Date.now() + 1, senderId: friend.id, text: '', time: 'Сейчас', songShare: friend.currentSong }] : []),
+  ],
+});
 
 async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(options.headers || {});
@@ -278,6 +307,7 @@ export default function App() {
   const [profileStats, setProfileStats] = useState<ApiProfileStats>({ friends: 0, tracks: 0, likes: 0, playlists: 0 });
   const [likedTrackKeys, setLikedTrackKeys] = useState<Set<string>>(new Set());
   const [likedSongs, setLikedSongs] = useState<Song[]>([]);
+  const [uploadedSongs, setUploadedSongs] = useState<Song[]>([]);
   const [activeSession, setActiveSession] = useState<ApiSession | null>(null);
   const [sessionMessages, setSessionMessages] = useState<ApiSessionMessage[]>([]);
   const [currentBackendSongId, setCurrentBackendSongId] = useState<number | null>(null);
@@ -287,19 +317,33 @@ export default function App() {
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
   const [currentTimeSec, setCurrentTimeSec] = useState(0);
   const [durationSec, setDurationSec] = useState(0);
+  const [pendingWidgetRequest, setPendingWidgetRequest] = useState<WidgetOpenRequest | null>(() => getInitialWidgetOpenRequest());
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const friendsRef = useRef<Friend[]>([]);
   const currentSongRef = useRef<Song>(SONGS[0]);
   const shuffleRef = useRef(shuffleOn);
   const repeatModeRef = useRef<RepeatMode>(repeatMode);
   const nextTrackRef = useRef<(() => void) | null>(null);
   const tokenRef = useRef(token);
   const clearNowPlayingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const friendsPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const friendsLoadInFlightRef = useRef(false);
   const lastMessageIdRef = useRef(0);
   const handledInviteIdsRef = useRef<Set<number>>(new Set());
   const suppressSessionSyncRef = useRef(false);
   const lastAppliedSessionSongIdRef = useRef<number | null>(null);
+  const lastAutoOpenedSessionIdRef = useRef<number | null>(null);
 
   const currentSong = customSong || SONGS[songIndex];
+  const selectSongInPlayer = (song: Song) => {
+    const idx = SONGS.findIndex((item) => item.id === song.id);
+    if (idx >= 0) {
+      setSongIndex(idx);
+      setCustomSong(null);
+      return;
+    }
+    setCustomSong(song);
+  };
   const resolveStreamUrl = (song: Song): string | null => {
     if (!song.streamUrl) return null;
     if (song.streamUrl.startsWith('http')) return song.streamUrl;
@@ -449,6 +493,10 @@ export default function App() {
   }, [currentSong]);
 
   useEffect(() => {
+    friendsRef.current = friends;
+  }, [friends]);
+
+  useEffect(() => {
     shuffleRef.current = shuffleOn;
   }, [shuffleOn]);
 
@@ -480,8 +528,10 @@ export default function App() {
     setProfileStats({ friends: 0, tracks: 0, likes: 0, playlists: 0 });
     setLikedTrackKeys(new Set());
     setLikedSongs([]);
+    setUploadedSongs([]);
     audioRef.current?.pause();
     setIsPlaying(false);
+    void publishFriendsWidgetSnapshot([], undefined).catch(() => undefined);
   };
 
   useEffect(() => {
@@ -552,29 +602,52 @@ export default function App() {
     };
   }, []);
 
-  const loadFriends = async (accessToken: string) => {
-    setIsLoadingData(true);
+  useEffect(() => {
+    let handle: { remove: () => Promise<void> } | null = null;
+    void listenForAppUrls((url) => {
+      const request = parseWidgetOpenRequest(url);
+      if (request) setPendingWidgetRequest(request);
+    }).then((listener) => {
+      handle = listener;
+    });
+    return () => {
+      void handle?.remove();
+    };
+  }, []);
+
+  const loadFriends = async (accessToken: string, options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) setIsLoadingData(true);
     try {
       const backendFriends = await apiRequest<ApiUser[]>('/friends', {}, accessToken);
+      const previousFriendsById = new Map(friendsRef.current.map((friend) => [friend.id, friend]));
       const mapped = await Promise.all(
         backendFriends.map(async (bf, idx) => {
           let nowPlaying: ApiNowPlaying | null = null;
+          let nowPlayingRequestFailed = false;
           try {
             nowPlaying = await apiRequest<ApiNowPlaying>(`/friends/${bf.id}/now-playing`, {}, accessToken);
           } catch {
-            nowPlaying = null;
+            nowPlayingRequestFailed = true;
           }
 
           const fallback = FRIENDS[idx % FRIENDS.length] || FRIENDS[0];
+          const previous = previousFriendsById.get(bf.id);
+          const currentSong = nowPlayingRequestFailed
+            ? previous?.currentSong
+            : nowPlaying?.song
+              ? mapBackendSongToUiSong(nowPlaying.song, idx)
+              : undefined;
+
           return {
             id: bf.id,
             name: bf.name,
             username: toUsername(bf.name),
             avatar: normalizeAvatarUrl(bf.avatar_url) || AVATAR_POOL[idx % AVATAR_POOL.length] || fallback.avatar,
             isOnline: true,
-            isListening: Boolean(nowPlaying?.song),
-            currentSong: nowPlaying?.song ? mapBackendSongToUiSong(nowPlaying.song, idx) : undefined,
-            lastActive: LAST_ACTIVE_POOL[idx % LAST_ACTIVE_POOL.length],
+            isListening: nowPlayingRequestFailed ? Boolean(previous?.currentSong) : Boolean(nowPlaying?.song),
+            currentSong,
+            lastActive: previous?.lastActive || LAST_ACTIVE_POOL[idx % LAST_ACTIVE_POOL.length],
           } satisfies Friend;
         })
       );
@@ -584,18 +657,20 @@ export default function App() {
       setChatThreads(threads);
       setOpenChat((prev) => (prev ? threads.find((t) => t.friend.id === prev.friend.id) ?? null : null));
     } finally {
-      setIsLoadingData(false);
+      if (!silent) setIsLoadingData(false);
     }
   };
 
   const loadProfileData = async (accessToken: string) => {
-    const [stats, likes] = await Promise.all([
+    const [stats, likes, uploaded] = await Promise.all([
       apiRequest<ApiProfileStats>('/me/stats', {}, accessToken),
       apiRequest<ApiLikedTrack[]>('/me/likes', {}, accessToken),
+      apiRequest<ApiSong[]>('/me/songs?uploaded_only=1', {}, accessToken),
     ]);
     setProfileStats(stats);
     setLikedTrackKeys(new Set(likes.map((item) => item.track_key)));
     setLikedSongs(likes.map((item, idx) => mapLikedTrackToSong(item, idx)));
+    setUploadedSongs(uploaded.map((item) => mapUploadedSongToUiSong(item)));
   };
 
   const refreshProfileStats = async (accessToken: string) => {
@@ -604,6 +679,40 @@ export default function App() {
   };
 
   const findFriendById = (id: number): Friend | null => friends.find((f) => f.id === id) || null;
+
+  useEffect(() => {
+    if (!pendingWidgetRequest || !token || !currentUser) return;
+
+    const friend = findFriendById(pendingWidgetRequest.friendId);
+    if (!friend) return;
+
+    const nextThread = chatThreads.find((thread) => thread.friend.id === friend.id) || buildFallbackThread(friend);
+    const targetSong = friend.currentSong && (!pendingWidgetRequest.trackId || friend.currentSong.id === pendingWidgetRequest.trackId)
+      ? friend.currentSong
+      : friend.currentSong;
+
+    setTab('chat');
+    setOpenChat(nextThread);
+    setShareModal(null);
+    setNpOpen(false);
+    setListeningWith(friend);
+    setActiveQueue(null);
+    setQueueIndex(null);
+    setPlayerError('');
+
+    if (targetSong) {
+      selectSongInPlayer(targetSong);
+      if (pendingWidgetRequest.autoplay) {
+        void startPlayback(targetSong);
+      } else {
+        audioRef.current?.pause();
+        setIsPlaying(false);
+      }
+    }
+
+    setPendingWidgetRequest(null);
+    clearHandledWidgetParams();
+  }, [pendingWidgetRequest, token, currentUser, chatThreads, friends, findFriendById, selectSongInPlayer, startPlayback]);
 
   const toggleLike = async (song: Song): Promise<boolean> => {
     if (!token) return false;
@@ -656,6 +765,19 @@ export default function App() {
     setCurrentUser((prev) => (prev ? { ...prev, tag: updated.tag } : prev));
   };
 
+  const uploadTrack = async (file: File): Promise<Song> => {
+    if (!token) throw new Error('Нет активной сессии');
+    const data = new FormData();
+    data.append('file', file);
+    const uploaded = await apiRequest<ApiSong>('/songs/upload', {
+      method: 'POST',
+      body: data,
+    }, token);
+    const nextSong = mapUploadedSongToUiSong(uploaded, file.name);
+    await loadProfileData(token);
+    return nextSong;
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -690,9 +812,73 @@ export default function App() {
 
   useEffect(() => {
     if (!token || !currentUser) return;
-    void loadFriends(token);
     void loadProfileData(token);
   }, [token, currentUser]);
+
+  useEffect(() => {
+    if (!token || !currentUser) return;
+
+    let stop = false;
+
+    const clearScheduledRefresh = () => {
+      if (friendsPollTimerRef.current) {
+        clearTimeout(friendsPollTimerRef.current);
+        friendsPollTimerRef.current = null;
+      }
+    };
+
+    const getNextDelay = () =>
+      typeof document !== 'undefined' && document.visibilityState === 'visible'
+        ? FRIENDS_POLL_INTERVAL_MS
+        : FRIENDS_POLL_HIDDEN_INTERVAL_MS;
+
+    const scheduleNext = () => {
+      if (stop) return;
+      clearScheduledRefresh();
+      friendsPollTimerRef.current = setTimeout(() => {
+        void refreshFriends(true);
+      }, getNextDelay());
+    };
+
+    const refreshFriends = async (silent: boolean) => {
+      if (friendsLoadInFlightRef.current) {
+        scheduleNext();
+        return;
+      }
+      friendsLoadInFlightRef.current = true;
+      try {
+        await loadFriends(token, { silent });
+      } catch {
+        // noop: keep stale friend state until next poll
+      } finally {
+        friendsLoadInFlightRef.current = false;
+        scheduleNext();
+      }
+    };
+
+    const refreshSoonIfActive = () => {
+      if (stop) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      clearScheduledRefresh();
+      void refreshFriends(true);
+    };
+
+    void refreshFriends(false);
+    window.addEventListener('focus', refreshSoonIfActive);
+    document.addEventListener('visibilitychange', refreshSoonIfActive);
+
+    return () => {
+      stop = true;
+      clearScheduledRefresh();
+      window.removeEventListener('focus', refreshSoonIfActive);
+      document.removeEventListener('visibilitychange', refreshSoonIfActive);
+    };
+  }, [token, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    void publishFriendsWidgetSnapshot(friends, currentUser.name).catch(() => undefined);
+  }, [friends, currentUser]);
 
   useEffect(() => {
     if (!token || !currentUser) return;
@@ -735,6 +921,7 @@ export default function App() {
           setSessionMessages([]);
           lastMessageIdRef.current = 0;
           lastAppliedSessionSongIdRef.current = null;
+          lastAutoOpenedSessionIdRef.current = null;
           setCurrentBackendSongId(null);
         }
         if (session && session.song) {
@@ -742,7 +929,10 @@ export default function App() {
           const mateId = session.host_id === currentUser.id ? session.guest_id : session.host_id;
           const mate = findFriendById(mateId);
           if (mate) setListeningWith(mate);
-          setNpOpen(true);
+          if (lastAutoOpenedSessionIdRef.current !== session.id) {
+            setNpOpen(true);
+            lastAutoOpenedSessionIdRef.current = session.id;
+          }
           if (suppressSessionSyncRef.current) {
             if (!stop) setTimeout(tick, nextDelay);
             return;
@@ -950,6 +1140,7 @@ export default function App() {
     setCurrentBackendSongId(accepted.song?.id ?? null);
     setSessionMessages([]);
     lastMessageIdRef.current = 0;
+    lastAutoOpenedSessionIdRef.current = accepted.id;
     if (accepted.song) {
       const mateId = currentUser && accepted.host_id === currentUser.id ? accepted.guest_id : accepted.host_id;
       const mate = findFriendById(mateId);
@@ -997,8 +1188,10 @@ export default function App() {
     } finally {
       setActiveSession(null);
       setListeningWith(null);
+      setNpOpen(false);
       setSessionMessages([]);
       lastMessageIdRef.current = 0;
+      lastAutoOpenedSessionIdRef.current = null;
       setCurrentBackendSongId(null);
       setActiveQueue(null);
       setQueueIndex(null);
@@ -1016,13 +1209,7 @@ export default function App() {
       setActiveQueue(null);
       setQueueIndex(null);
     }
-    const idx = SONGS.findIndex(s => s.id === song.id);
-    if (idx >= 0) {
-      setSongIndex(idx);
-      setCustomSong(null);
-    } else {
-      setCustomSong(song);
-    }
+    selectSongInPlayer(song);
     setIsPlaying(true);
     setListeningWith(friend ?? null);
     if (friend) setNpOpen(true);
@@ -1080,9 +1267,11 @@ export default function App() {
             currentUser={currentUser}
             stats={profileStats}
             likedSongs={likedSongs}
+            uploadedSongs={uploadedSongs}
             likedTrackKeys={likedTrackKeys}
             onToggleLike={toggleLike}
             onUploadAvatar={uploadAvatar}
+            onUploadTrack={uploadTrack}
             onUpdateTag={updateMyTag}
             onPlay={(s) => playSong(s)}
           />
@@ -1713,25 +1902,32 @@ function ProfileScreen({
   currentUser,
   stats,
   likedSongs,
+  uploadedSongs,
   likedTrackKeys,
   onToggleLike,
   onUploadAvatar,
+  onUploadTrack,
   onUpdateTag,
   onPlay,
 }: {
   currentUser: ApiUser;
   stats: ApiProfileStats;
   likedSongs: Song[];
+  uploadedSongs: Song[];
   likedTrackKeys: Set<string>;
   onToggleLike: (song: Song) => Promise<boolean>;
   onUploadAvatar: (file: File) => Promise<void>;
+  onUploadTrack: (file: File) => Promise<Song>;
   onUpdateTag: (tag: string) => Promise<void>;
   onPlay: (song: Song) => void;
 }) {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const trackInputRef = useRef<HTMLInputElement | null>(null);
   const [tagInput, setTagInput] = useState(currentUser.tag || '');
   const [savingTag, setSavingTag] = useState(false);
   const [tagError, setTagError] = useState('');
+  const [uploadingTrack, setUploadingTrack] = useState(false);
+  const [trackUploadError, setTrackUploadError] = useState('');
 
   useEffect(() => {
     setTagInput(currentUser.tag || '');
@@ -1754,6 +1950,18 @@ function ProfileScreen({
     }
   };
 
+  const handleTrackUpload = async (file: File) => {
+    setTrackUploadError('');
+    setUploadingTrack(true);
+    try {
+      await onUploadTrack(file);
+    } catch (err) {
+      setTrackUploadError(err instanceof Error ? err.message : 'Не удалось загрузить трек');
+    } finally {
+      setUploadingTrack(false);
+    }
+  };
+
   return (
     <>
       <div className="profile-card">
@@ -1762,6 +1970,9 @@ function ProfileScreen({
         <p>@{currentUser.tag || toUsername(currentUser.name).replace('@', '')}</p>
         <button className="profile-avatar-btn" onClick={() => avatarInputRef.current?.click()}>
           Сменить аватар
+        </button>
+        <button className="profile-avatar-btn" onClick={() => trackInputRef.current?.click()}>
+          {uploadingTrack ? 'Загружаем трек...' : 'Загрузить трек'}
         </button>
         <input
           ref={avatarInputRef}
@@ -1772,6 +1983,18 @@ function ProfileScreen({
             const file = e.target.files?.[0];
             if (!file) return;
             void onUploadAvatar(file);
+            e.currentTarget.value = '';
+          }}
+        />
+        <input
+          ref={trackInputRef}
+          type="file"
+          accept="audio/*"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            void handleTrackUpload(file);
             e.currentTarget.value = '';
           }}
         />
@@ -1786,12 +2009,27 @@ function ProfileScreen({
           </button>
         </div>
         {tagError && <div className="auth-error" style={{ marginTop: 8 }}>{tagError}</div>}
+        {trackUploadError && <div className="auth-error" style={{ marginTop: 8 }}>{trackUploadError}</div>}
         <div className="profile-stats">
           <div className="profile-stat"><span className="num">{stats.friends}</span><span className="label">Друзья</span></div>
           <div className="profile-stat"><span className="num">{stats.tracks}</span><span className="label">Треки</span></div>
           <div className="profile-stat"><span className="num">{stats.likes}</span><span className="label">Лайки</span></div>
         </div>
       </div>
+      <div className="section-header"><h3 className="section-title">Загруженные треки</h3></div>
+      {uploadedSongs.map((song) => (
+        <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
+          <img src={song.cover} alt="" />
+          <div className="trending-info"><h4>{song.title}</h4><p>{song.artist} · {song.duration}</p></div>
+          <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
+            e.stopPropagation();
+            onPlay(song);
+          }}>
+            <Play size={14} fill="#fff" />
+          </button>
+        </div>
+      ))}
+      {uploadedSongs.length === 0 && <div className="search-status">Загруженные в этой сессии треки появятся здесь</div>}
       <div className="section-header"><h3 className="section-title">Лайкнутые треки</h3></div>
       {likedSongs.slice(0, 20).map((song) => (
         <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>

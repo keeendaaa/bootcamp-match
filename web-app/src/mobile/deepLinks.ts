@@ -1,0 +1,92 @@
+export const WIDGET_SOURCE = 'friends-widget';
+export const MATCH_DEEP_LINK_SCHEME = 'matchapp';
+export const MATCH_DEEP_LINK_HOST = 'widget';
+export const MATCH_DEEP_LINK_PATH = '/open';
+
+export interface WidgetOpenRequest {
+  source: typeof WIDGET_SOURCE;
+  tab: 'chat';
+  friendId: number;
+  trackId?: number;
+  autoplay: boolean;
+}
+
+const TRUE_VALUES = new Set(['1', 'true', 'yes']);
+
+const parsePositiveInt = (value: string | null): number | undefined => {
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+};
+
+const isWidgetOpenUrl = (url: URL): boolean => {
+  if (url.protocol === `${MATCH_DEEP_LINK_SCHEME}:`) {
+    return url.host === MATCH_DEEP_LINK_HOST && url.pathname === MATCH_DEEP_LINK_PATH;
+  }
+  return url.searchParams.get('source') === WIDGET_SOURCE;
+};
+
+export const parseWidgetOpenRequest = (rawUrl: string): WidgetOpenRequest | null => {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  if (!isWidgetOpenUrl(url)) return null;
+
+  const friendId = parsePositiveInt(url.searchParams.get('friendId'));
+  if (!friendId) return null;
+
+  return {
+    source: WIDGET_SOURCE,
+    tab: 'chat',
+    friendId,
+    trackId: parsePositiveInt(url.searchParams.get('trackId')),
+    autoplay: TRUE_VALUES.has((url.searchParams.get('autoplay') || '').toLowerCase()),
+  };
+};
+
+export const getInitialWidgetOpenRequest = (): WidgetOpenRequest | null => {
+  if (typeof window === 'undefined') return null;
+  return parseWidgetOpenRequest(window.location.href);
+};
+
+export const buildWidgetDeepLink = (request: Omit<WidgetOpenRequest, 'source' | 'tab'>): string => {
+  const url = new URL(`${MATCH_DEEP_LINK_SCHEME}://${MATCH_DEEP_LINK_HOST}${MATCH_DEEP_LINK_PATH}`);
+  url.searchParams.set('source', WIDGET_SOURCE);
+  url.searchParams.set('tab', 'chat');
+  url.searchParams.set('friendId', String(request.friendId));
+  if (request.trackId) url.searchParams.set('trackId', String(request.trackId));
+  if (request.autoplay) url.searchParams.set('autoplay', '1');
+  return url.toString();
+};
+
+export const buildWidgetWebUrl = (
+  request: Omit<WidgetOpenRequest, 'source' | 'tab'>,
+  origin = typeof window === 'undefined' ? 'https://matchapp.site' : window.location.origin
+): string => {
+  const url = new URL(origin);
+  url.searchParams.set('source', WIDGET_SOURCE);
+  url.searchParams.set('tab', 'chat');
+  url.searchParams.set('friendId', String(request.friendId));
+  if (request.trackId) url.searchParams.set('trackId', String(request.trackId));
+  if (request.autoplay) url.searchParams.set('autoplay', '1');
+  return url.toString();
+};
+
+export const clearHandledWidgetParams = (): void => {
+  if (typeof window === 'undefined') return;
+  const current = new URL(window.location.href);
+  if (!isWidgetOpenUrl(current) || current.protocol !== 'http:' && current.protocol !== 'https:') return;
+
+  current.searchParams.delete('source');
+  current.searchParams.delete('tab');
+  current.searchParams.delete('friendId');
+  current.searchParams.delete('trackId');
+  current.searchParams.delete('autoplay');
+  const nextSearch = current.searchParams.toString();
+  const nextUrl = `${current.pathname}${nextSearch ? `?${nextSearch}` : ''}${current.hash}`;
+  window.history.replaceState({}, document.title, nextUrl);
+};
