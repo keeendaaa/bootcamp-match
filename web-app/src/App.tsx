@@ -690,24 +690,18 @@ export default function App() {
     if (!silent) setIsLoadingData(true);
     try {
       const backendFriends = await apiRequest<ApiUser[]>('/friends', {}, accessToken);
-      const previousFriendsById = new Map(friendsRef.current.map((friend) => [friend.id, friend]));
       const mapped = await Promise.all(
         backendFriends.map(async (bf, idx) => {
           let nowPlaying: ApiNowPlaying | null = null;
-          let nowPlayingRequestFailed = false;
           try {
             nowPlaying = await apiRequest<ApiNowPlaying>(`/friends/${bf.id}/now-playing`, {}, accessToken);
           } catch {
-            nowPlayingRequestFailed = true;
+            nowPlaying = null;
           }
 
           const fallback = FRIENDS[idx % FRIENDS.length] || FRIENDS[0];
-          const previous = previousFriendsById.get(bf.id);
-          const currentSong = nowPlayingRequestFailed
-            ? previous?.currentSong
-            : nowPlaying?.song
-              ? mapBackendSongToUiSong(nowPlaying.song, idx)
-              : undefined;
+          const previous = friendsRef.current.find((friend) => friend.id === bf.id);
+          const currentSong = nowPlaying?.song ? mapBackendSongToUiSong(nowPlaying.song, idx) : undefined;
 
           return {
             id: bf.id,
@@ -715,7 +709,7 @@ export default function App() {
             username: toUsername(bf.name),
             avatar: normalizeAvatarUrl(bf.avatar_url) || AVATAR_POOL[idx % AVATAR_POOL.length] || fallback.avatar,
             isOnline: true,
-            isListening: nowPlayingRequestFailed ? Boolean(previous?.currentSong) : Boolean(nowPlaying?.song),
+            isListening: Boolean(nowPlaying?.song),
             currentSong,
             lastActive: previous?.lastActive || LAST_ACTIVE_POOL[idx % LAST_ACTIVE_POOL.length],
           } satisfies Friend;
