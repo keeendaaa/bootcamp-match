@@ -450,7 +450,7 @@ export default function App() {
   const [profileStats, setProfileStats] = useState<ApiProfileStats>({ friends: 0, tracks: 0, likes: 0, playlists: 0 });
   const [likedTrackKeys, setLikedTrackKeys] = useState<Set<string>>(new Set());
   const [likedSongs, setLikedSongs] = useState<Song[]>([]);
-  const [uploadedSongs, setUploadedSongs] = useState<Song[]>([]);
+  const [recentSongs, setRecentSongs] = useState<Song[]>([]);
   const [activeSession, setActiveSession] = useState<ApiSession | null>(null);
   const [sessionMessages, setSessionMessages] = useState<ApiSessionMessage[]>([]);
   const [currentBackendSongId, setCurrentBackendSongId] = useState<number | null>(null);
@@ -720,7 +720,7 @@ export default function App() {
     setProfileStats({ friends: 0, tracks: 0, likes: 0, playlists: 0 });
     setLikedTrackKeys(new Set());
     setLikedSongs([]);
-    setUploadedSongs([]);
+    setRecentSongs([]);
     audioRef.current?.pause();
     setIsPlaying(false);
     void publishFriendsWidgetSnapshot([], undefined).catch(() => undefined);
@@ -981,15 +981,15 @@ export default function App() {
   };
 
   const loadProfileData = async (accessToken: string) => {
-    const [stats, likes, uploaded] = await Promise.all([
+    const [stats, likes, recent] = await Promise.all([
       apiRequest<ApiProfileStats>('/me/stats', {}, accessToken),
       apiRequest<ApiLikedTrack[]>('/me/likes', {}, accessToken),
-      apiRequest<ApiSong[]>('/me/songs?uploaded_only=1', {}, accessToken),
+      apiRequest<ApiSong[]>('/me/songs', {}, accessToken),
     ]);
     setProfileStats(stats);
     setLikedTrackKeys(new Set(likes.map((item) => item.track_key)));
     setLikedSongs(likes.map((item, idx) => mapLikedTrackToSong(item, idx)));
-    setUploadedSongs(uploaded.map((item) => mapUploadedSongToUiSong(item)));
+    setRecentSongs(mergeUniqueSongs(recent.map((item) => mapSessionSongToUiSong(item))));
   };
 
   const refreshProfileStats = async (accessToken: string) => {
@@ -1186,7 +1186,7 @@ export default function App() {
       setProfileStats({ friends: FRIENDS.length, tracks: SONGS.length, likes: 2, playlists: 1 });
       setLikedTrackKeys(new Set([trackKeyOfSong(SONGS[0]), trackKeyOfSong(SONGS[1])]));
       setLikedSongs([SONGS[0], SONGS[1]]);
-      setUploadedSongs([SONGS[2]]);
+      setRecentSongs([SONGS[2]]);
       return;
     }
     void loadProfileData(token);
@@ -1736,7 +1736,7 @@ export default function App() {
             currentUser={currentUser}
             stats={profileStats}
             likedSongs={likedSongs}
-            uploadedSongs={uploadedSongs}
+            recentSongs={recentSongs}
             likedTrackKeys={likedTrackKeys}
             onToggleLike={toggleLike}
             onUploadAvatar={uploadAvatar}
@@ -2809,7 +2809,7 @@ function ProfileScreen({
   currentUser,
   stats,
   likedSongs,
-  uploadedSongs,
+  recentSongs,
   likedTrackKeys,
   onToggleLike,
   onUploadAvatar,
@@ -2820,7 +2820,7 @@ function ProfileScreen({
   currentUser: ApiUser;
   stats: ApiProfileStats;
   likedSongs: Song[];
-  uploadedSongs: Song[];
+  recentSongs: Song[];
   likedTrackKeys: Set<string>;
   onToggleLike: (song: Song) => Promise<boolean>;
   onUploadAvatar: (file: File) => Promise<void>;
@@ -2934,20 +2934,6 @@ function ProfileScreen({
           <div className="profile-stat"><span className="num">{stats.likes}</span><span className="label">Лайки</span></div>
         </div>
       </div>
-      <div className="section-header"><h3 className="section-title">Последние проигранные треки</h3></div>
-      {uploadedSongs.map((song) => (
-        <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
-          <img src={song.cover} alt="" />
-          <div className="trending-info"><h4>{song.title}</h4><p>{song.artist} · {song.duration}</p></div>
-          <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
-            e.stopPropagation();
-            onPlay(song);
-          }}>
-            <Play size={14} fill="#fff" />
-          </button>
-        </div>
-      ))}
-      {uploadedSongs.length === 0 && <div className="search-status">Здесь будут появляться последние треки, которые вы слушали</div>}
       <div className="section-header"><h3 className="section-title">Лайкнутые треки</h3></div>
       {likedSongs.slice(0, 20).map((song) => (
         <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
@@ -2973,6 +2959,20 @@ function ProfileScreen({
         </div>
       ))}
       {likedSongs.length === 0 && <div className="search-status">Пока нет лайков</div>}
+      <div className="section-header"><h3 className="section-title">Последние прослушанные треки</h3></div>
+      {recentSongs.map((song) => (
+        <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
+          <img src={song.cover} alt="" />
+          <div className="trending-info"><h4>{song.title}</h4><p>{song.artist} · {song.duration}</p></div>
+          <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
+            e.stopPropagation();
+            onPlay(song);
+          }}>
+            <Play size={14} fill="#fff" />
+          </button>
+        </div>
+      ))}
+      {recentSongs.length === 0 && <div className="search-status">Здесь будут появляться последние треки, которые вы слушали</div>}
     </>
   );
 }
