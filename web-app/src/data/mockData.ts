@@ -33,12 +33,12 @@ export interface ChatThread {
 }
 
 export const SONGS: Song[] = [
-  { id: 1, title: 'Blinding Lights', artist: 'The Weeknd', cover: '/covers/cover1.jpg', duration: '3:20' },
-  { id: 2, title: 'Levitating', artist: 'Dua Lipa', cover: '/covers/cover2.jpg', duration: '3:23' },
-  { id: 3, title: 'Peaches', artist: 'Justin Bieber', cover: '/covers/cover3.jpg', duration: '3:18' },
-  { id: 4, title: 'Stay', artist: 'The Kid LAROI', cover: '/covers/cover4.jpg', duration: '2:21' },
-  { id: 5, title: 'Heat Waves', artist: 'Glass Animals', cover: '/covers/cover5.jpg', duration: '3:58' },
-  { id: 6, title: 'good 4 u', artist: 'Olivia Rodrigo', cover: '/covers/cover6.jpg', duration: '2:58' },
+  { id: 1, title: 'Blinding Lights', artist: 'The Weeknd', cover: '/covers/cover1.jpg', duration: '3:20', streamUrl: '/music/stream/4NRXx6U8ABQ' },
+  { id: 2, title: 'Levitating', artist: 'Dua Lipa', cover: '/covers/cover2.jpg', duration: '3:23', streamUrl: '/music/stream/TUVcZfQe-Kw' },
+  { id: 3, title: 'Peaches', artist: 'Justin Bieber', cover: '/covers/cover3.jpg', duration: '3:18', streamUrl: '/music/stream/tQ0yjYUFKAE' },
+  { id: 4, title: 'Stay', artist: 'The Kid LAROI', cover: '/covers/cover4.jpg', duration: '2:21', streamUrl: '/music/stream/kTJczUoc26U' },
+  { id: 5, title: 'Heat Waves', artist: 'Glass Animals', cover: '/covers/cover5.jpg', duration: '3:58', streamUrl: '/music/stream/mRD0-GxqHVo' },
+  { id: 6, title: 'good 4 u', artist: 'Olivia Rodrigo', cover: '/covers/cover6.jpg', duration: '2:58', streamUrl: '/music/stream/gNi_6U5Pm_o' },
 ];
 
 export const FRIENDS: Friend[] = [
