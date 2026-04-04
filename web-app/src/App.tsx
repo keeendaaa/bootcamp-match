@@ -627,6 +627,7 @@ export default function App() {
 
   const clearNowPlayingOnBackend = async () => {
     const accessToken = tokenRef.current;
+    if (accessToken === DEMO_TOKEN) return;
     if (!accessToken) return;
     try {
       await apiRequest<{ ok: boolean }>('/me/now-playing', { method: 'DELETE' }, accessToken);
@@ -637,6 +638,7 @@ export default function App() {
 
   const touchNowPlayingOnBackend = async () => {
     const accessToken = tokenRef.current;
+    if (accessToken === DEMO_TOKEN) return;
     if (!accessToken) return;
     try {
       await apiRequest<{ ok: boolean }>('/me/now-playing/heartbeat', { method: 'POST' }, accessToken);
@@ -2201,7 +2203,7 @@ function DiscoverScreen({
   const [hasRemoteLoaded, setHasRemoteLoaded] = useState(false);
 
   useEffect(() => {
-    if (!token || isDemoMode) {
+    if (!token && !isDemoMode) {
       setLoading(false);
       setRemoteSongs([]);
       setHasRemoteLoaded(false);
@@ -2214,10 +2216,11 @@ function DiscoverScreen({
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
+        const accessToken = isDemoMode ? undefined : token;
         const results = await apiRequest<ApiMusicSearchItem[]>(
           `/music/search?q=${encodeURIComponent(effectiveQuery)}&limit=20`,
           {},
-          token
+          accessToken
         );
         if (cancelled) return;
         const mapped: Song[] = results.map((item, idx) => ({
