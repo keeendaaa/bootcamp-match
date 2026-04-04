@@ -2719,6 +2719,7 @@ function FriendsScreen({
   const [suggestions, setSuggestions] = useState<ApiUser[]>([]);
   const [searching, setSearching] = useState(false);
   const friendInputRef = useRef<HTMLInputElement | null>(null);
+  const listeningFriends = friends.filter((friend) => friend.isListening && friend.currentSong);
 
   const submitAddFriend = async () => {
     const trimmed = friendName.trim();
@@ -2831,10 +2832,14 @@ function FriendsScreen({
       </div>
 
       {!loading && friends.length === 0 && (
-        <div className="empty-friends">Список друзей пока пуст. Добавьте друга по имени выше.</div>
+        <div className="empty-friends">Пока здесь пусто. Добавьте друзей по @тегу — и их музыка появится тут.</div>
       )}
 
-      {friends.filter(f => f.currentSong).map((friend, i) => (
+      {!loading && friends.length > 0 && listeningFriends.length === 0 && (
+        <div className="search-status">Пока никто из друзей не слушает музыку. Здесь появятся их текущие треки.</div>
+      )}
+
+      {listeningFriends.map((friend, i) => (
         <motion.div className="widget-card glass-card" key={friend.id}
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
