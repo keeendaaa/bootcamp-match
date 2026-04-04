@@ -2036,7 +2036,6 @@ export default function App() {
           <DiscoverScreen
             token={token}
             isDemoMode={isDemoMode}
-            likedTrackKeys={likedTrackKeys}
             deviceNowPlayingSupported={deviceNowPlayingSupported}
             deviceNowPlayingAccessGranted={deviceNowPlayingAccessGranted}
             deviceNowPlayingTrack={deviceNowPlayingTrack}
@@ -2046,7 +2045,6 @@ export default function App() {
             deviceNowPlayingError={deviceNowPlayingError}
             onOpenDeviceAccessSettings={() => void openDeviceAccessSettings()}
             onRefreshDeviceNowPlaying={() => void refreshDeviceNowPlaying()}
-            onToggleLike={toggleLike}
             onPlay={(s, queue, index) => playSong(s, undefined, queue, index)}
             onEnqueue={enqueueSong}
             onShare={(s) => setShareModal(s)}
@@ -2744,7 +2742,6 @@ function FriendsScreen({
 function DiscoverScreen({
   token,
   isDemoMode,
-  likedTrackKeys,
   deviceNowPlayingSupported,
   deviceNowPlayingAccessGranted,
   deviceNowPlayingTrack,
@@ -2754,14 +2751,12 @@ function DiscoverScreen({
   deviceNowPlayingError,
   onOpenDeviceAccessSettings,
   onRefreshDeviceNowPlaying,
-  onToggleLike,
   onPlay,
   onEnqueue,
   onShare,
 }: {
   token: string;
   isDemoMode: boolean;
-  likedTrackKeys: Set<string>;
   deviceNowPlayingSupported: boolean;
   deviceNowPlayingAccessGranted: boolean;
   deviceNowPlayingTrack: DeviceNowPlayingTrack | null;
@@ -2771,7 +2766,6 @@ function DiscoverScreen({
   deviceNowPlayingError: string;
   onOpenDeviceAccessSettings: () => void;
   onRefreshDeviceNowPlaying: () => void;
-  onToggleLike: (song: Song) => Promise<boolean>;
   onPlay: (s: Song, queue?: Song[], index?: number) => void;
   onEnqueue: (song: Song) => void;
   onShare: (s: Song) => void;
@@ -3110,14 +3104,6 @@ function DiscoverScreen({
             </button>
           ) : (
             <>
-              <motion.button
-                className="icon-btn glass-btn-sm"
-                onClick={() => void onToggleLike(song)}
-                animate={likedTrackKeys.has(trackKeyOfSong(song)) ? { scale: [1, 1.18, 1] } : { scale: 1 }}
-                transition={{ duration: 0.28 }}
-              >
-                <Heart size={16} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
-              </motion.button>
               <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
               <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
               <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
