@@ -95,6 +95,7 @@ type ApiMusicSearchItem = {
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'https://matchapp.site/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
 const AUTH_STORAGE_KEY = 'match_backend_token';
+const ONBOARDING_SEEN_KEY = 'match_onboarding_seen';
 const DEMO_TOKEN = '__MATCH_DEMO__';
 const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksandr.jpg', '/avatars/galya.jpg'];
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
@@ -406,6 +407,7 @@ export default function App() {
   const [token, setToken] = useState<string>(() => localStorage.getItem(AUTH_STORAGE_KEY) || '');
   const [currentUser, setCurrentUser] = useState<ApiUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => !localStorage.getItem(ONBOARDING_SEEN_KEY));
   const [authError, setAuthError] = useState('');
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [playerError, setPlayerError] = useState('');
@@ -657,10 +659,17 @@ export default function App() {
 
   const enterDemoMode = () => {
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
+    setShowOnboarding(false);
     setToken(DEMO_TOKEN);
     setCurrentUser(DEMO_USER);
     setAuthError('');
     setTab('friends');
+  };
+
+  const completeOnboarding = () => {
+    localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
+    setShowOnboarding(false);
   };
 
   useEffect(() => {
@@ -1290,6 +1299,8 @@ export default function App() {
         body: JSON.stringify(payload),
       });
       localStorage.setItem(AUTH_STORAGE_KEY, auth.access_token);
+      localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
+      setShowOnboarding(false);
       setToken(auth.access_token);
       setCurrentUser({ ...auth.user, avatar_url: normalizeAvatarUrl(auth.user.avatar_url) || null });
     } catch (err) {
@@ -1515,6 +1526,9 @@ export default function App() {
   }
 
   if (!token || !currentUser) {
+    if (showOnboarding) {
+      return <OnboardingScreen onContinue={completeOnboarding} onDemo={enterDemoMode} />;
+    }
     return (
       <AuthScreen
         error={authError}
@@ -1542,6 +1556,7 @@ export default function App() {
         {tab === 'discover' && (
           <DiscoverScreen
             token={token}
+            isDemoMode={isDemoMode}
             likedTrackKeys={likedTrackKeys}
             onToggleLike={toggleLike}
             onPlay={(s, queue, index) => playSong(s, undefined, queue, index)}
@@ -1665,6 +1680,73 @@ function AppHeader({ tab, currentUser, onLogout }: { tab: Tab; currentUser: ApiU
         <button className="icon-btn" onClick={onLogout} title="Выйти"><LogOut size={20} /></button>
       </div>
     </header>
+  );
+}
+
+/* ========== ONBOARDING ========== */
+function OnboardingScreen({ onContinue, onDemo }: { onContinue: () => void; onDemo: () => void }) {
+  const slides = [
+    {
+      title: 'Это Match',
+      text: 'Социальный музыкальный сервис, где можно слушать вместе и знакомиться по вкусу.',
+    },
+    {
+      title: 'Слушайте синхронно',
+      text: 'Подключайтесь к эфиру друга, трек и время воспроизведения синхронизируются.',
+    },
+    {
+      title: 'Общайтесь в моменте',
+      text: 'Пишите в чат, делитесь треками и тестируйте функции без регистрации в демо-режиме.',
+    },
+  ];
+  const [step, setStep] = useState(0);
+  const isLast = step === slides.length - 1;
+
+  return (
+    <div className="onboarding-shell">
+      <motion.div
+        className="onboarding-card glass-card"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <img src="/logo.png" alt="MATCH" className="auth-logo" />
+        <div className="onboarding-progress">
+          {slides.map((_, idx) => (
+            <span key={idx} className={`dot ${idx === step ? 'active' : ''}`} />
+          ))}
+        </div>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={step}
+            initial={{ opacity: 0, x: 14 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -14 }}
+            transition={{ duration: 0.2 }}
+          >
+            <h2>{slides[step].title}</h2>
+            <p>{slides[step].text}</p>
+          </motion.div>
+        </AnimatePresence>
+
+        <div className="onboarding-actions">
+          {!isLast && (
+            <button className="auth-submit" onClick={() => setStep((prev) => Math.min(slides.length - 1, prev + 1))}>
+              Далее
+            </button>
+          )}
+          {isLast && (
+            <>
+              <button className="auth-submit" onClick={onContinue}>
+                Войти / Регистрация
+              </button>
+              <button className="auth-submit" type="button" onClick={onDemo}>
+                Открыть тестовую версию
+              </button>
+            </>
+          )}
+        </div>
+      </motion.div>
+    </div>
   );
 }
 
@@ -1995,12 +2077,14 @@ function FriendsScreen({
 /* ========== DISCOVER ========== */
 function DiscoverScreen({
   token,
+  isDemoMode,
   likedTrackKeys,
   onToggleLike,
   onPlay,
   onShare,
 }: {
   token: string;
+  isDemoMode: boolean;
   likedTrackKeys: Set<string>;
   onToggleLike: (song: Song) => Promise<boolean>;
   onPlay: (s: Song, queue?: Song[], index?: number) => void;
@@ -2012,7 +2096,12 @@ function DiscoverScreen({
   const [hasRemoteLoaded, setHasRemoteLoaded] = useState(false);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || isDemoMode) {
+      setLoading(false);
+      setRemoteSongs([]);
+      setHasRemoteLoaded(false);
+      return;
+    }
     const trimmed = query.trim();
     const effectiveQuery = trimmed.length >= 2 ? trimmed : 'top hits';
 
@@ -2037,8 +2126,14 @@ function DiscoverScreen({
         setRemoteSongs(mapped);
         setHasRemoteLoaded(true);
       } catch (err) {
-        console.warn('YTM search failed', err);
-        if (!cancelled) setRemoteSongs([]);
+        if (!cancelled) {
+          setRemoteSongs([]);
+          setHasRemoteLoaded(false);
+        }
+        const msg = err instanceof Error ? err.message : '';
+        if (!msg.includes('401')) {
+          console.warn('YTM search failed', err);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -2048,7 +2143,7 @@ function DiscoverScreen({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, token]);
+  }, [query, token, isDemoMode]);
 
   const list = hasRemoteLoaded ? remoteSongs : SONGS;
 
