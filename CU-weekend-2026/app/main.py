@@ -183,6 +183,57 @@ def get_user_from_ws_token(token: str, db: Session) -> User | None:
     return db.query(User).filter(User.id == user_id).first()
 
 
+def format_duration_hms(total_seconds: int | None) -> str | None:
+    if not total_seconds or total_seconds <= 0:
+        return None
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+def search_music_with_ytdlp(q: str, limit: int) -> list[MusicSearchItem]:
+    opts = {
+        "quiet": True,
+        "skip_download": True,
+        "extract_flat": False,
+        "noplaylist": True,
+    }
+    items: list[MusicSearchItem] = []
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"ytsearch{limit}:{q}", download=False) or {}
+    entries = info.get("entries") or []
+    for row in entries:
+        if not isinstance(row, dict):
+            continue
+        video_id = row.get("id")
+        if not video_id:
+            continue
+        artist = row.get("uploader") or row.get("channel") or "Unknown Artist"
+        thumbnails = row.get("thumbnails") or []
+        cover_url = None
+        if thumbnails and isinstance(thumbnails, list):
+            last_thumb = thumbnails[-1]
+            if isinstance(last_thumb, dict):
+                cover_url = last_thumb.get("url")
+        items.append(
+            MusicSearchItem(
+                video_id=str(video_id),
+                title=row.get("title") or f"Track {video_id}",
+                artist=str(artist),
+                duration=format_duration_hms(row.get("duration")),
+                cover_url=cover_url,
+                source_url=f"https://www.youtube.com/watch?v={video_id}",
+                stream_url=f"/music/stream/{video_id}",
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -248,35 +299,48 @@ def search_music(
     q: str = Query(min_length=2, max_length=120),
     limit: int = Query(default=10, ge=1, le=20),
 ) -> list[MusicSearchItem]:
-    results = ytmusic.search(q, filter="songs", limit=limit) or []
-    items: list[MusicSearchItem] = []
+    try:
+        results = ytmusic.search(q, filter="songs", limit=limit) or []
+        items: list[MusicSearchItem] = []
 
-    for row in results:
-        video_id = row.get("videoId")
-        if not video_id:
-            continue
+        for row in results:
+            video_id = row.get("videoId")
+            if not video_id:
+                continue
 
-        artists = row.get("artists") or []
-        artist_name = "Unknown Artist"
-        if artists and isinstance(artists[0], dict):
-            artist_name = artists[0].get("name") or artist_name
+            artists = row.get("artists") or []
+            artist_name = "Unknown Artist"
+            if artists and isinstance(artists[0], dict):
+                artist_name = artists[0].get("name") or artist_name
 
-        thumbnails = row.get("thumbnails") or []
-        cover_url = thumbnails[-1].get("url") if thumbnails and isinstance(thumbnails[-1], dict) else None
+            thumbnails = row.get("thumbnails") or []
+            cover_url = thumbnails[-1].get("url") if thumbnails and isinstance(thumbnails[-1], dict) else None
 
-        items.append(
-            MusicSearchItem(
-                video_id=video_id,
-                title=row.get("title") or f"Track {video_id}",
-                artist=artist_name,
-                duration=row.get("duration"),
-                cover_url=cover_url,
-                source_url=f"https://music.youtube.com/watch?v={video_id}",
-                stream_url=f"/music/stream/{video_id}",
+            items.append(
+                MusicSearchItem(
+                    video_id=video_id,
+                    title=row.get("title") or f"Track {video_id}",
+                    artist=artist_name,
+                    duration=row.get("duration"),
+                    cover_url=cover_url,
+                    source_url=f"https://music.youtube.com/watch?v={video_id}",
+                    stream_url=f"/music/stream/{video_id}",
+                )
             )
-        )
+        if items:
+            return items[:limit]
+    except Exception:
+        # fallback below
+        pass
 
-    return items[:limit]
+    try:
+        fallback_items = search_music_with_ytdlp(q, limit)
+        if fallback_items:
+            return fallback_items[:limit]
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Music search failed: {exc}")
+
+    return []
 
 
 def resolve_stream(video_id: str) -> tuple[str, dict[str, str]]:
