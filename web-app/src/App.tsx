@@ -8,6 +8,7 @@ import {
   Plus, ChevronRight,
   Mic, MicOff, X
 } from 'lucide-react';
+import LiquidGlass from 'liquid-glass-react';
 import { SONGS, FRIENDS, CHAT_THREADS, TRENDING_TAGS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
 import { listenForAppUrls } from './mobile/capacitor';
 import {
@@ -2986,15 +2987,33 @@ function BottomNav({ tab, onChangeTab }: { tab: Tab; onChangeTab: (t: Tab) => vo
     { id: 'profile', icon: User, label: 'Профиль' },
   ];
   return (
-    <nav className="bottom-nav glass-nav">
+    <nav className="bottom-nav liquid-nav-shell">
       {items.map((item) => {
         const Icon = item.icon;
         const active = tab === item.id;
         return (
-          <div key={item.id} className={`nav-item ${active ? 'active' : ''}`} onClick={() => onChangeTab(item.id)}>
-            <div className="nav-icon-wrap"><Icon size={22} fill={active ? 'currentColor' : 'none'} /></div>
-            <span>{item.label}</span>
-          </div>
+          <LiquidGlass
+            key={item.id}
+            className={`nav-item-liquid ${active ? 'active' : ''}`}
+            cornerRadius={28}
+            displacementScale={54}
+            blurAmount={0.08}
+            saturation={132}
+            aberrationIntensity={1.2}
+            elasticity={0.22}
+            padding="0"
+            overLight
+            mode="standard"
+          >
+            <button
+              type="button"
+              className={`nav-item ${active ? 'active' : ''}`}
+              onClick={() => onChangeTab(item.id)}
+            >
+              <div className="nav-icon-wrap"><Icon size={22} fill={active ? 'currentColor' : 'none'} /></div>
+              <span>{item.label}</span>
+            </button>
+          </LiquidGlass>
         );
       })}
     </nav>
