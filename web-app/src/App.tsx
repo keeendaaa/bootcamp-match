@@ -130,10 +130,37 @@ const trimSongTitle = (title: string, max = 72): string => {
   return `${clean.slice(0, max - 1).trimEnd()}…`;
 };
 
-const isLikelyPlayableUrl = (url: string): boolean => {
-  if (!url) return false;
-  if (url.includes('/music/stream/')) return true;
-  return /^https?:\/\/.+/i.test(url);
+const normalizeBackendFileUrl = (raw?: string | null): string | undefined => {
+  if (!raw) return undefined;
+  if (raw.startsWith('/api/files/')) return `${API_ORIGIN}${raw}`;
+  if (raw.startsWith('/files/')) return `${API_BASE}${raw}`;
+  try {
+    const parsed = new URL(raw, API_ORIGIN);
+    const pathWithSearch = `${parsed.pathname}${parsed.search}`;
+    if (parsed.pathname.startsWith('/api/files/')) return `${API_ORIGIN}${pathWithSearch}`;
+    if (parsed.pathname.startsWith('/files/')) return `${API_BASE}${pathWithSearch}`;
+  } catch {
+    // noop
+  }
+  return raw;
+};
+
+const normalizePlayableUrl = (raw?: string | null): string | undefined => {
+  if (!raw) return undefined;
+  if (raw.startsWith('/music/stream/')) return raw;
+
+  const normalizedFileUrl = normalizeBackendFileUrl(raw);
+  if (normalizedFileUrl && normalizedFileUrl !== raw) return normalizedFileUrl;
+
+  try {
+    const parsed = new URL(raw, API_ORIGIN);
+    const pathWithSearch = `${parsed.pathname}${parsed.search}`;
+    if (parsed.pathname.startsWith('/music/stream/')) return pathWithSearch;
+    if (/^https?:$/i.test(parsed.protocol)) return raw;
+  } catch {
+    // noop
+  }
+  return undefined;
 };
 
 const trackKeyOfSong = (song: Song): string => {
@@ -149,23 +176,13 @@ const normalizeAvatarUrl = (raw?: string | null): string | undefined => {
   if (raw.startsWith('https://matchapp.site/files/')) {
     return raw.replace('https://matchapp.site/files/', 'https://matchapp.site/api/files/');
   }
-  if (raw.startsWith('/files/')) return `${API_BASE}${raw}`;
-  return raw;
+  return normalizeBackendFileUrl(raw);
 };
 
 const mapBackendSongToUiSong = (song: ApiSong, idx: number): Song => {
   const base = SONGS[idx % SONGS.length];
   const rawUrl = song.stream_url || song.url || '';
-  let streamUrl: string | undefined;
-  if (isLikelyPlayableUrl(rawUrl)) {
-    if (rawUrl.startsWith('/api/')) {
-      streamUrl = `${API_ORIGIN}${rawUrl}`;
-    } else if (rawUrl.startsWith('/music/stream/')) {
-      streamUrl = rawUrl;
-    } else {
-      streamUrl = rawUrl;
-    }
-  }
+  const streamUrl = normalizePlayableUrl(rawUrl);
   return {
     ...base,
     id: 4_000_000 + song.id,
@@ -206,12 +223,7 @@ const mapLikedTrackToSong = (track: ApiLikedTrack, idx: number): Song => {
 const mapSessionSongToUiSong = (song: ApiSong): Song => {
   const base = SONGS[0];
   const rawUrl = song.stream_url || song.url || '';
-  let streamUrl: string | undefined;
-  if (isLikelyPlayableUrl(rawUrl)) {
-    if (rawUrl.startsWith('/api/')) streamUrl = `${API_ORIGIN}${rawUrl}`;
-    else if (rawUrl.startsWith('/music/stream/')) streamUrl = rawUrl;
-    else streamUrl = rawUrl;
-  }
+  const streamUrl = normalizePlayableUrl(rawUrl);
   return {
     ...base,
     id: 5_000_000 + song.id,
@@ -436,10 +448,7 @@ export default function App() {
     setCustomSong(song);
   };
   const resolveStreamUrl = (song: Song): string | null => {
-    if (!song.streamUrl) return null;
-    if (song.streamUrl.startsWith('http')) return song.streamUrl;
-    if (song.streamUrl.startsWith('/')) return `${API_BASE}${song.streamUrl}`;
-    return null;
+    return normalizePlayableUrl(song.streamUrl) || null;
   };
 
   const startPlayback = async (song: Song) => {
