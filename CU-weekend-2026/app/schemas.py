@@ -118,6 +118,16 @@ class MusicSearchItem(BaseModel):
     stream_url: str | None = None
 
 
+class PodcastSearchItem(BaseModel):
+    podcast_id: str
+    title: str
+    artist: str
+    duration: str | None = None
+    cover_url: str | None = None
+    source_url: str | None = None
+    stream_url: str | None = None
+
+
 class SessionInviteCreate(BaseModel):
     friend_id: int
     song_id: int | None = None

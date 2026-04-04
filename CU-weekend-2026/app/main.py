@@ -3,6 +3,7 @@ import re
 import shutil
 import uuid
 from datetime import datetime, timedelta, timezone
+from xml.etree import ElementTree as ET
 from urllib.parse import urlparse
 
 import jwt
@@ -30,6 +31,7 @@ from .schemas import (
     LikedTrackUpsert,
     LikeToggleResponse,
     MusicSearchItem,
+    PodcastSearchItem,
     NowPlayingResponse,
     NowPlayingUpdate,
     MeResponse,
@@ -49,6 +51,7 @@ from .schemas import (
 app = FastAPI(title="CU Weekend MVP API")
 ytmusic = YTMusic()
 STREAM_CACHE: dict[str, tuple[str, dict[str, str]]] = {}
+PODCAST_STREAM_CACHE: dict[str, str] = {}
 NOW_PLAYING_TTL_SECONDS = 40
 VOICE_WS_CONNECTIONS: dict[int, dict[int, set[WebSocket]]] = {}
 
@@ -303,6 +306,27 @@ def resolve_stream(video_id: str) -> tuple[str, dict[str, str]]:
         raise HTTPException(status_code=502, detail=f"Failed to resolve stream: {exc}")
 
 
+def parse_episode_audio(feed_url: str) -> tuple[str | None, str | None]:
+    try:
+        resp = requests.get(feed_url, timeout=12)
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+    except Exception:
+        return None, None
+
+    for item in root.findall(".//item"):
+        enclosure = item.find("enclosure")
+        if enclosure is None:
+            continue
+        audio_url = enclosure.get("url")
+        if not audio_url:
+            continue
+        if audio_url.startswith("http://") or audio_url.startswith("https://"):
+            duration_raw = item.findtext("{http://www.itunes.com/dtds/podcast-1.0.dtd}duration")
+            return audio_url, (duration_raw.strip() if duration_raw else None)
+    return None, None
+
+
 @app.get("/music/stream/{video_id}")
 def stream_music(
     video_id: str,
@@ -326,6 +350,100 @@ def stream_music(
     if upstream.status_code >= 400:
         detail = f"Upstream stream error: {upstream.status_code}"
         raise HTTPException(status_code=502, detail=detail)
+
+    passthrough = {}
+    for key in ("Content-Length", "Content-Range", "Accept-Ranges"):
+        value = upstream.headers.get(key)
+        if value:
+            passthrough[key] = value
+
+    media_type = upstream.headers.get("Content-Type", "audio/mpeg")
+
+    def iter_chunks():
+        try:
+            for chunk in upstream.iter_content(chunk_size=1024 * 64):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    return StreamingResponse(
+        iter_chunks(),
+        status_code=upstream.status_code,
+        media_type=media_type,
+        headers=passthrough,
+    )
+
+
+@app.get("/podcasts/search", response_model=list[PodcastSearchItem])
+def search_podcasts(
+    q: str = Query(min_length=2, max_length=120),
+    limit: int = Query(default=10, ge=1, le=20),
+) -> list[PodcastSearchItem]:
+    endpoint = (
+        "https://itunes.apple.com/search"
+        f"?term={q}&entity=podcast&limit={limit}&country=US"
+    )
+    try:
+        resp = requests.get(endpoint, timeout=15)
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Podcast search failed: {exc}")
+
+    results = payload.get("results") or []
+    items: list[PodcastSearchItem] = []
+    for row in results:
+        feed_url = row.get("feedUrl")
+        if not feed_url:
+            continue
+        audio_url, episode_duration = parse_episode_audio(feed_url)
+        if not audio_url:
+            continue
+
+        stream_id = uuid.uuid4().hex
+        PODCAST_STREAM_CACHE[stream_id] = audio_url
+        episode_count = row.get("trackCount")
+        duration_label = episode_duration or (f"Эпизодов: {episode_count}" if episode_count else "Подкаст")
+
+        items.append(
+            PodcastSearchItem(
+                podcast_id=str(row.get("trackId") or stream_id),
+                title=row.get("trackName") or row.get("collectionName") or "Podcast",
+                artist=row.get("artistName") or "Podcast",
+                duration=duration_label,
+                cover_url=row.get("artworkUrl600") or row.get("artworkUrl100"),
+                source_url=row.get("trackViewUrl") or row.get("collectionViewUrl"),
+                stream_url=f"/podcasts/stream/{stream_id}",
+            )
+        )
+        if len(items) >= limit:
+            break
+
+    return items
+
+
+@app.get("/podcasts/stream/{stream_id}")
+def stream_podcast(
+    stream_id: str,
+    request: Request,
+) -> StreamingResponse:
+    target_url = PODCAST_STREAM_CACHE.get(stream_id)
+    if not target_url:
+        raise HTTPException(status_code=404, detail="Podcast stream not found")
+
+    parsed = urlparse(target_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=400, detail="Unsupported podcast stream URL")
+
+    headers: dict[str, str] = {}
+    range_header = request.headers.get("range")
+    if range_header:
+        headers["Range"] = range_header
+
+    upstream = requests.get(target_url, headers=headers, stream=True, timeout=30)
+    if upstream.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Upstream podcast stream error: {upstream.status_code}")
 
     passthrough = {}
     for key in ("Content-Length", "Content-Range", "Accept-Ranges"):

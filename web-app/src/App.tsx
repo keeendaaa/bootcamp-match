@@ -6,7 +6,7 @@ import {
   ChevronDown, Heart, Shuffle, Repeat,
   Share2, Send, ArrowLeft, Bell, LogOut,
   Plus, ChevronRight,
-  Mic, MicOff, X, ExternalLink
+  Mic, MicOff, X
 } from 'lucide-react';
 import { SONGS, PODCASTS, FRIENDS, CHAT_THREADS, TRENDING_TAGS, PODCAST_TAGS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
 import { listenForAppUrls } from './mobile/capacitor';
@@ -92,17 +92,13 @@ type ApiMusicSearchItem = {
   stream_url: string | null;
 };
 type ApiPodcastSearchItem = {
-  trackId?: number;
-  artistName?: string;
-  trackName?: string;
-  collectionName?: string;
-  artworkUrl600?: string;
-  artworkUrl100?: string;
-  trackCount?: number;
-  primaryGenreName?: string;
-  trackViewUrl?: string;
-  collectionViewUrl?: string;
-  feedUrl?: string;
+  podcast_id: string;
+  title: string;
+  artist: string;
+  duration?: string | null;
+  cover_url?: string | null;
+  source_url?: string | null;
+  stream_url?: string | null;
 };
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'https://matchapp.site/api';
@@ -164,7 +160,9 @@ const normalizeBackendFileUrl = (raw?: string | null): string | undefined => {
 const normalizePlayableUrl = (raw?: string | null): string | undefined => {
   if (!raw) return undefined;
   if (raw.startsWith('/music/stream/')) return `${API_BASE}${raw}`;
+  if (raw.startsWith('/podcasts/stream/')) return `${API_BASE}${raw}`;
   if (raw.startsWith('/api/music/stream/')) return `${API_ORIGIN}${raw}`;
+  if (raw.startsWith('/api/podcasts/stream/')) return `${API_ORIGIN}${raw}`;
 
   const normalizedFileUrl = normalizeBackendFileUrl(raw);
   if (normalizedFileUrl && normalizedFileUrl !== raw) return normalizedFileUrl;
@@ -173,7 +171,9 @@ const normalizePlayableUrl = (raw?: string | null): string | undefined => {
     const parsed = new URL(raw, API_ORIGIN);
     const pathWithSearch = `${parsed.pathname}${parsed.search}`;
     if (parsed.pathname.startsWith('/music/stream/')) return `${API_BASE}${pathWithSearch}`;
+    if (parsed.pathname.startsWith('/podcasts/stream/')) return `${API_BASE}${pathWithSearch}`;
     if (parsed.pathname.startsWith('/api/music/stream/')) return `${API_ORIGIN}${pathWithSearch}`;
+    if (parsed.pathname.startsWith('/api/podcasts/stream/')) return `${API_ORIGIN}${pathWithSearch}`;
     if (/^https?:$/i.test(parsed.protocol)) return raw;
   } catch {
     // noop
@@ -2439,20 +2439,21 @@ function DiscoverScreen({
       try {
         let mapped: DiscoverItem[] = [];
         if (mode === 'podcasts') {
-          const resp = await fetch(
-            `https://itunes.apple.com/search?term=${encodeURIComponent(effectiveQuery)}&entity=podcast&limit=20&country=US`
+          const accessToken = isDemoMode ? undefined : token;
+          const results = await apiRequest<ApiPodcastSearchItem[]>(
+            `/podcasts/search?q=${encodeURIComponent(effectiveQuery)}&limit=20`,
+            {},
+            accessToken
           );
-          if (!resp.ok) throw new Error(`Podcast API ${resp.status}`);
-          const data = (await resp.json()) as { results?: ApiPodcastSearchItem[] };
-          const results = data.results || [];
           mapped = results.map((item, idx) => ({
-            id: item.trackId || 3_000_000 + idx,
-            title: trimSongTitle(item.trackName || item.collectionName || 'Podcast'),
-            artist: item.artistName || 'Podcast',
-            cover: item.artworkUrl600 || item.artworkUrl100 || PODCASTS[idx % PODCASTS.length].cover,
-            duration: item.trackCount ? `Эпизодов: ${item.trackCount}` : (item.primaryGenreName || 'Подкаст'),
+            id: Number(item.podcast_id) || 3_000_000 + idx,
+            title: trimSongTitle(item.title || 'Podcast'),
+            artist: item.artist || 'Podcast',
+            cover: item.cover_url || PODCASTS[idx % PODCASTS.length].cover,
+            duration: item.duration || 'Подкаст',
+            streamUrl: item.stream_url || undefined,
             isPodcast: true,
-            externalUrl: item.trackViewUrl || item.collectionViewUrl || item.feedUrl,
+            externalUrl: item.source_url || undefined,
           }));
         } else {
           const accessToken = isDemoMode ? undefined : token;
@@ -2481,7 +2482,7 @@ function DiscoverScreen({
         }
         const msg = err instanceof Error ? err.message : '';
         if (!msg.includes('401')) {
-          console.warn('YTM search failed', err);
+          console.warn(mode === 'podcasts' ? 'Podcasts search failed' : 'YTM search failed', err);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -2535,20 +2536,12 @@ function DiscoverScreen({
             src={song.cover}
             alt=""
             onClick={() => {
-              if (song.isPodcast) {
-                if (song.externalUrl) window.open(song.externalUrl, '_blank', 'noopener,noreferrer');
-                return;
-              }
               onPlay(song, list, idx);
             }}
           />
           <div
             className="trending-info"
             onClick={() => {
-              if (song.isPodcast) {
-                if (song.externalUrl) window.open(song.externalUrl, '_blank', 'noopener,noreferrer');
-                return;
-              }
               onPlay(song, list, idx);
             }}
           >
@@ -2556,14 +2549,8 @@ function DiscoverScreen({
             <p>{song.artist} · {song.duration}</p>
           </div>
           {song.isPodcast ? (
-            <button
-              className="icon-btn glass-btn-sm"
-              onClick={() => {
-                if (song.externalUrl) window.open(song.externalUrl, '_blank', 'noopener,noreferrer');
-              }}
-              title="Открыть подкаст"
-            >
-              <ExternalLink size={16} />
+            <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
+              <Play size={14} fill="#fff" />
             </button>
           ) : (
             <>
