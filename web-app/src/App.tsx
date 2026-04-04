@@ -2578,6 +2578,7 @@ function FriendsScreen({
   const [friendName, setFriendName] = useState('');
   const [suggestions, setSuggestions] = useState<ApiUser[]>([]);
   const [searching, setSearching] = useState(false);
+  const friendInputRef = useRef<HTMLInputElement | null>(null);
 
   const submitAddFriend = async () => {
     const trimmed = friendName.trim();
@@ -2585,6 +2586,15 @@ function FriendsScreen({
     await onAddFriend(trimmed);
     setFriendName('');
     setSuggestions([]);
+  };
+
+  const openAddFriendsCta = () => {
+    if (!friendName.trim()) setFriendName('@');
+    requestAnimationFrame(() => {
+      friendInputRef.current?.focus();
+      const valueLength = friendInputRef.current?.value.length ?? 0;
+      friendInputRef.current?.setSelectionRange(valueLength, valueLength);
+    });
   };
 
   useEffect(() => {
@@ -2615,6 +2625,7 @@ function FriendsScreen({
     <>
       <div className="add-friend-row glass-inset">
         <input
+          ref={friendInputRef}
           placeholder="Добавить друга по @тегу"
           value={friendName}
           onChange={(e) => setFriendName(e.target.value)}
@@ -2666,6 +2677,17 @@ function FriendsScreen({
             <span className="story-name">{f.name.split(' ')[0]}</span>
           </div>
         ))}
+        <button
+          type="button"
+          className="story-item story-item-cta"
+          onClick={openAddFriendsCta}
+          aria-label="Найти и добавить друзей"
+        >
+          <div className="story-ring story-cta-ring">
+            <div className="story-cta-icon"><Plus size={18} strokeWidth={2.6} /></div>
+          </div>
+          <span className="story-name">Найти друзей</span>
+        </button>
       </div>
 
       {!loading && friends.length === 0 && (
