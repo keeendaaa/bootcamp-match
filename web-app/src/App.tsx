@@ -8,7 +8,7 @@ import {
   Plus, ChevronRight,
   Mic, MicOff, X
 } from 'lucide-react';
-import { SONGS, FRIENDS, TRENDING_TAGS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
+import { SONGS, FRIENDS, CHAT_THREADS, TRENDING_TAGS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
 import { listenForAppUrls } from './mobile/capacitor';
 import {
   clearHandledWidgetParams,
@@ -95,10 +95,14 @@ type ApiMusicSearchItem = {
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'https://matchapp.site/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
 const AUTH_STORAGE_KEY = 'match_backend_token';
+const DEMO_TOKEN = '__MATCH_DEMO__';
 const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksandr.jpg', '/avatars/galya.jpg'];
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
 const FRIENDS_POLL_INTERVAL_MS = 1_000;
 const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 1_000;
+const FRIENDS_POLL_INTERVAL_MS = 12_000;
+const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 30_000;
+const DEMO_USER: ApiUser = { id: 0, name: 'Demo User', email: 'demo@match.app', tag: 'demo', avatar_url: '/avatars/user.jpg' };
 
 const toUsername = (name: string) =>
   `@${name.toLowerCase().replace(/[^a-zа-я0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'user'}`;
@@ -436,6 +440,7 @@ export default function App() {
   const suppressSessionSyncRef = useRef(false);
   const lastAppliedSessionSongIdRef = useRef<number | null>(null);
   const lastAutoOpenedSessionIdRef = useRef<number | null>(null);
+  const isDemoMode = token === DEMO_TOKEN;
 
   const currentSong = customSong || SONGS[songIndex];
   const selectSongInPlayer = (song: Song) => {
@@ -650,6 +655,14 @@ export default function App() {
     audioRef.current?.pause();
     setIsPlaying(false);
     void publishFriendsWidgetSnapshot([], undefined).catch(() => undefined);
+  };
+
+  const enterDemoMode = () => {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    setToken(DEMO_TOKEN);
+    setCurrentUser(DEMO_USER);
+    setAuthError('');
+    setTab('friends');
   };
 
   useEffect(() => {
@@ -963,6 +976,13 @@ export default function App() {
         setAuthReady(true);
         return;
       }
+      if (token === DEMO_TOKEN) {
+        if (!cancelled) {
+          setCurrentUser(DEMO_USER);
+          setAuthReady(true);
+        }
+        return;
+      }
       try {
         const me = await apiRequest<ApiMeResponse>('/me', {}, token);
         if (cancelled) return;
@@ -989,11 +1009,23 @@ export default function App() {
 
   useEffect(() => {
     if (!token || !currentUser) return;
+    if (isDemoMode) {
+      setProfileStats({ friends: FRIENDS.length, tracks: SONGS.length, likes: 2, playlists: 1 });
+      setLikedTrackKeys(new Set([trackKeyOfSong(SONGS[0]), trackKeyOfSong(SONGS[1])]));
+      setLikedSongs([SONGS[0], SONGS[1]]);
+      setUploadedSongs([SONGS[2]]);
+      return;
+    }
     void loadProfileData(token);
-  }, [token, currentUser]);
+  }, [token, currentUser, isDemoMode]);
 
   useEffect(() => {
     if (!token || !currentUser) return;
+    if (isDemoMode) {
+      setFriends(FRIENDS);
+      setChatThreads(CHAT_THREADS);
+      return;
+    }
 
     let stop = false;
 
@@ -1050,7 +1082,7 @@ export default function App() {
       window.removeEventListener('focus', refreshSoonIfActive);
       document.removeEventListener('visibilitychange', refreshSoonIfActive);
     };
-  }, [token, currentUser]);
+  }, [token, currentUser, isDemoMode]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -1069,6 +1101,7 @@ export default function App() {
 
   useEffect(() => {
     if (!token || !currentUser) return;
+    if (isDemoMode) return;
     let stop = false;
     const tick = async () => {
       try {
@@ -1082,10 +1115,11 @@ export default function App() {
     return () => {
       stop = true;
     };
-  }, [token, currentUser]);
+  }, [token, currentUser, isDemoMode]);
 
   useEffect(() => {
     if (!token || !currentUser) return;
+    if (isDemoMode) return;
     let stop = false;
     const poll = async () => {
       try {
@@ -1109,10 +1143,11 @@ export default function App() {
     return () => {
       stop = true;
     };
-  }, [token, currentUser, friends]);
+  }, [token, currentUser, friends, isDemoMode]);
 
   useEffect(() => {
     if (!token || !currentUser) return;
+    if (isDemoMode) return;
     let stop = false;
     const tick = async () => {
       let nextDelay = 2500;
@@ -1197,10 +1232,11 @@ export default function App() {
     return () => {
       stop = true;
     };
-  }, [token, currentUser, friends]);
+  }, [token, currentUser, friends, isDemoMode]);
 
   useEffect(() => {
     if (!token || !activeSession) return;
+    if (isDemoMode) return;
     let stop = false;
     const pollMsgs = async () => {
       try {
@@ -1222,10 +1258,11 @@ export default function App() {
     return () => {
       stop = true;
     };
-  }, [token, activeSession]);
+  }, [token, activeSession, isDemoMode]);
 
   useEffect(() => {
     if (!token || !activeSession || suppressSessionSyncRef.current || !currentUser) return;
+    if (isDemoMode) return;
     const isHost = activeSession.host_id === currentUser.id;
     if (!isHost) return;
     const timer = setInterval(() => {
@@ -1241,7 +1278,7 @@ export default function App() {
       }, token).catch(() => undefined);
     }, 2000);
     return () => clearInterval(timer);
-  }, [token, activeSession, currentUser, currentBackendSongId]);
+  }, [token, activeSession, currentUser, currentBackendSongId, isDemoMode]);
 
   const submitAuth = async (mode: AuthMode, email: string, password: string, name?: string) => {
     setAuthError('');
@@ -1263,6 +1300,10 @@ export default function App() {
   };
 
   const addFriend = async (friendName: string) => {
+    if (isDemoMode) {
+      setAuthError('Это демо-режим: добавление друзей доступно после входа.');
+      return;
+    }
     if (!token || !friendName.trim()) return;
     try {
       await apiRequest<ApiUser>('/friends', {
@@ -1277,11 +1318,13 @@ export default function App() {
   };
 
   const searchUsers = async (query: string): Promise<ApiUser[]> => {
+    if (isDemoMode) return [];
     if (!token) return [];
     return apiRequest<ApiUser[]>(`/users/search?q=${encodeURIComponent(query)}`, {}, token);
   };
 
   const syncNowPlayingToBackend = async (song: Song): Promise<ApiSong | null> => {
+    if (isDemoMode) return null;
     if (!token) return null;
     try {
       const songUrl = resolveStreamUrl(song) || `${window.location.origin}/tracks/${song.id}-${song.title.toLowerCase().replace(/\s+/g, '-')}`;
@@ -1316,6 +1359,7 @@ export default function App() {
     isPlayingNow: boolean,
     asGuest: boolean = false
   ) => {
+    if (isDemoMode) return;
     if (!token) return;
     try {
       const session = await apiRequest<ApiSession>('/listen/invite', {
@@ -1338,6 +1382,7 @@ export default function App() {
   };
 
   const acceptInvite = async (sessionId: number) => {
+    if (isDemoMode) return;
     if (!token) return;
     const accepted = await apiRequest<ApiSession>(`/listen/${sessionId}/accept`, { method: 'POST' }, token);
     setActiveSession(accepted);
@@ -1370,6 +1415,7 @@ export default function App() {
   };
 
   const sendSessionMessage = async (text: string) => {
+    if (isDemoMode) return;
     if (!token || !activeSession) return;
     try {
       const msg = await apiRequest<ApiSessionMessage>(`/listen/${activeSession.id}/messages`, {
@@ -1384,6 +1430,7 @@ export default function App() {
   };
 
   const leaveSession = async () => {
+    if (isDemoMode) return;
     if (!token || !activeSession) return;
     try {
       await apiRequest<ApiSession>(`/listen/${activeSession.id}/end`, { method: 'POST' }, token);
@@ -1404,6 +1451,17 @@ export default function App() {
 
   const sendSongToFriendChat = async (friend: Friend, song: Song) => {
     if (!token) return;
+    if (isDemoMode) {
+      const next: ChatMessage = {
+        id: Date.now(),
+        senderId: currentUser?.id ?? 0,
+        text: `🎵 ${song.title}`,
+        time: 'Сейчас',
+        songShare: song,
+      };
+      updateThreadPreview(friend.id, next, 0);
+      return;
+    }
     try {
       await apiRequest<ApiDirectMessage>(
         `/chats/${friend.id}/messages`,
@@ -1463,6 +1521,7 @@ export default function App() {
       <AuthScreen
         error={authError}
         onSubmit={submitAuth}
+        onDemo={enterDemoMode}
       />
     );
   }
@@ -1614,9 +1673,11 @@ function AppHeader({ tab, currentUser, onLogout }: { tab: Tab; currentUser: ApiU
 /* ========== AUTH ========== */
 function AuthScreen({
   onSubmit,
+  onDemo,
   error,
 }: {
   onSubmit: (mode: AuthMode, email: string, password: string, name?: string) => Promise<void>;
+  onDemo: () => void;
   error: string;
 }) {
   const [mode, setMode] = useState<AuthMode>('login');
@@ -1680,6 +1741,9 @@ function AuthScreen({
           />
           <button className="auth-submit" onClick={() => void submit()} disabled={submitting}>
             {submitting ? 'Подключение...' : mode === 'login' ? 'Войти' : 'Создать аккаунт'}
+          </button>
+          <button className="auth-submit" type="button" onClick={onDemo} disabled={submitting}>
+            Демо-режим без входа
           </button>
         </div>
 
@@ -2092,6 +2156,7 @@ function ChatDetail({
   onPlay: (s: Song) => void;
   onThreadActivity: (friendId: number, lastMessage: ChatMessage | null, unread: number) => void;
 }) {
+  const isDemoChat = token === DEMO_TOKEN;
   const [input, setInput] = useState('');
   const [msgs, setMsgs] = useState<ChatMessage[]>(thread.messages);
   const [loading, setLoading] = useState(false);
@@ -2104,6 +2169,13 @@ function ChatDetail({
   const lastDirectMessageIdRef = useRef(0);
 
   useEffect(() => {
+    if (isDemoChat) {
+      setMsgs(thread.messages);
+      setLoading(false);
+      setChatError('');
+      lastDirectMessageIdRef.current = thread.messages[thread.messages.length - 1]?.id || 0;
+      return;
+    }
     let stop = false;
     setMsgs([]);
     setChatError('');
@@ -2141,7 +2213,7 @@ function ChatDetail({
       stop = true;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thread.friend.id, token]);
+  }, [thread.friend.id, token, isDemoChat, thread.messages]);
 
   useEffect(() => {
     if (!songPicker) return;
@@ -2181,6 +2253,13 @@ function ChatDetail({
   const sendMsg = async () => {
     const text = input.trim();
     if (!text || sending) return;
+    if (isDemoChat) {
+      const next: ChatMessage = { id: Date.now(), senderId: currentUserId, text, time: 'Сейчас' };
+      setMsgs((prev) => [...prev, next]);
+      onThreadActivity(thread.friend.id, next, 0);
+      setInput('');
+      return;
+    }
     setSending(true);
     setChatError('');
     try {
@@ -2206,6 +2285,14 @@ function ChatDetail({
 
   const sendSong = async (song: Song) => {
     if (sending) return;
+    if (isDemoChat) {
+      const next: ChatMessage = { id: Date.now(), senderId: currentUserId, text: `🎵 ${song.title}`, time: 'Сейчас', songShare: song };
+      setMsgs((prev) => [...prev, next]);
+      onThreadActivity(thread.friend.id, next, 0);
+      setSongPicker(false);
+      setSongQuery('');
+      return;
+    }
     setSending(true);
     setChatError('');
     try {
