@@ -54,6 +54,10 @@ STREAM_CACHE: dict[str, tuple[str, dict[str, str]]] = {}
 PODCAST_STREAM_CACHE: dict[str, str] = {}
 NOW_PLAYING_TTL_SECONDS = 40
 VOICE_WS_CONNECTIONS: dict[int, dict[int, set[WebSocket]]] = {}
+PODCAST_PROXY_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+}
 
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -437,11 +441,16 @@ def stream_podcast(
         raise HTTPException(status_code=400, detail="Unsupported podcast stream URL")
 
     headers: dict[str, str] = {}
+    headers.update(PODCAST_PROXY_HEADERS)
     range_header = request.headers.get("range")
     if range_header:
         headers["Range"] = range_header
 
     upstream = requests.get(target_url, headers=headers, stream=True, timeout=30)
+    if upstream.status_code == 403 and range_header:
+        upstream.close()
+        headers.pop("Range", None)
+        upstream = requests.get(target_url, headers=headers, stream=True, timeout=30)
     if upstream.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"Upstream podcast stream error: {upstream.status_code}")
 
