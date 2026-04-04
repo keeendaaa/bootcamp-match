@@ -2623,7 +2623,6 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
             <Heart size={16} color={isLiked ? 'var(--orange-main)' : 'currentColor'} /> Нравится
           </motion.button>
           <motion.button className="np-chip" whileTap={{ scale: 0.92 }} onClick={onShare}><Share2 size={16} /> Поделиться</motion.button>
-          <motion.button className="np-chip" whileTap={{ scale: 0.92 }} onClick={onClose}><ChevronDown size={16} /> Свернуть</motion.button>
           {sessionActive && (
             <motion.button className="np-chip np-chip-danger" whileTap={{ scale: 0.92 }} onClick={() => void onLeaveSession()}>
               <X size={16} /> Выйти из эфира
