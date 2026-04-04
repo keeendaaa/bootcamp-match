@@ -5,59 +5,75 @@
 </p>
 
 <p align="center">
-  Социальное музыкальное веб-приложение: друзья, эфиры, совместное прослушивание, чат и обмен треками в реальном времени.
+  MatchApp — социальное музыкальное приложение: друзья, эфиры, синхронное прослушивание, чат, подкасты и обмен треками.
 </p>
 
 <p align="center">
-  <a href="https://matchapp.site">🌐 Production</a>
+  <a href="https://matchapp.site">🌐 Production: matchapp.site</a>
 </p>
 
 ---
 
 ## О проекте
 
-`bootcamp-match` — монорепозиторий MatchApp с веб-клиентом и API-сервером.
+`bootcamp-match` — монорепозиторий с фронтендом и backend API.
 
-Продуктовая идея: пользователь видит, что слушают друзья, может подключиться к их эфиру, синхронно слушать трек и общаться в чате сессии.
-
-- Фронтенд: `Vite + React + TypeScript`
-- Бэкенд: `FastAPI + PostgreSQL + Alembic`
-- Инфра: `Nginx + systemd`
+- Фронтенд: `Vite + React + TypeScript + Framer Motion`
+- Бэкенд: `FastAPI + PostgreSQL + SQLAlchemy + Alembic`
+- Инфраструктура: `Nginx + systemd`
 
 ## Структура
 
 ```text
 .
-├── web-app/               # React-приложение
-├── CU-weekend-2026/       # FastAPI + миграции + модели
-├── photos/                # локальные ассеты (не для git)
+├── web-app/               # веб-клиент (UI, player, realtime)
+├── CU-weekend-2026/       # FastAPI API, модели, миграции
+├── photos/                # локальные ассеты (в git не хранятся)
+├── _env                   # локальный env (в git игнорируется)
 └── README.md
 ```
 
 Ключевые файлы:
 
-- `web-app/src/App.tsx` — главный UI/плеер/сессии/чаты
-- `web-app/src/index.css` — стили интерфейса
-- `web-app/src/data/mockData.ts` — демо-структуры и fallback-данные
-- `CU-weekend-2026/app/main.py` — REST API
+- `web-app/src/App.tsx` — основная клиентская логика
+- `web-app/src/index.css` — стили и анимации
+- `web-app/src/mobile/` — deep links / android integrations
+- `CU-weekend-2026/app/main.py` — REST + realtime API
 - `CU-weekend-2026/app/models.py` — SQLAlchemy модели
 - `CU-weekend-2026/app/schemas.py` — Pydantic схемы
 - `CU-weekend-2026/alembic/versions/` — миграции БД
 
-## Возможности
+## Актуальные возможности
 
-- Регистрация/вход по email и паролю
-- Демо-режим без авторизации (можно протестировать интерфейс и плеер)
+- Авторизация/регистрация по email + password
+- OAuth вход через Google и Яндекс ID
+- Демо-режим без входа
 - Онбординг для новых пользователей
 - Друзья и поиск пользователей по `@tag`
-- Профили друзей из ленты (открытие карточки профиля + список треков)
-- Лайки, профиль, смена аватара, редактирование `@tag`
-- Поиск треков и стриминг через backend
-- Отправка трека в личный чат
+- Профиль пользователя:
+  - смена аватара
+  - редактирование `@tag`
+  - лайкнутые и последние треки
+- Лента друзей: кто онлайн и что сейчас слушает
+- Discover:
+  - поиск треков
+  - поиск подкастов
+  - выбор выпусков подкаста
+  - кэширование результатов поиска
+- Плеер:
+  - очередь
+  - shuffle/repeat
+  - прогресс и seek
+  - корректная обработка ошибок потока
 - Совместное прослушивание:
-  - приглашение/принятие
-  - синхронизация позиции трека
+  - invite/accept
+  - синхронизация трека и позиции
   - чат внутри сессии
+  - выход из эфира
+- Личные чаты:
+  - переписка
+  - отправка треков в чат
+- Голосовая связь (WebRTC signaling через backend websocket)
 
 ## Скриншоты
 
@@ -68,9 +84,9 @@
   <img src="web-app/readme-photos/profile.png" alt="Profile" width="24%" />
 </p>
 
-## Быстрый старт
+## Локальный запуск
 
-### 1) Фронтенд
+### Frontend
 
 ```bash
 cd web-app
@@ -84,14 +100,7 @@ npm run dev
 npm run build
 ```
 
-### 2) Бэкенд (Docker)
-
-```bash
-cd CU-weekend-2026
-docker compose up --build
-```
-
-### 3) Бэкенд (venv)
+### Backend (venv)
 
 ```bash
 cd CU-weekend-2026
@@ -102,34 +111,114 @@ alembic upgrade head
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-## API (основное)
+### Backend (docker)
 
-- Auth: `/api/auth/register`, `/api/auth/login`
-- Профиль: `/api/me`, `/api/me/tag`, `/api/me/avatar/upload`
-- Музыка: `/api/music/search`, `/api/music/stream/{video_id}`
-- Друзья: `/api/friends`, `/api/users/search`
+```bash
+cd CU-weekend-2026
+docker compose up --build
+```
+
+## Переменные окружения
+
+Backend читает `.env` (см. `CU-weekend-2026/app/db.py`).
+
+Минимум для запуска:
+
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `JWT_ALGORITHM`
+- `JWT_EXPIRES_MINUTES`
+- `UPLOAD_DIR`
+
+Для OAuth:
+
+- `SOCIAL_AUTH_DEFAULT_ORIGIN`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REDIRECT_URI`
+- `YANDEX_CLIENT_ID`
+- `YANDEX_CLIENT_SECRET`
+- `YANDEX_REDIRECT_URI`
+
+Важно:
+
+- `_env`, `.env`, `.venv`, `node_modules`, `dist`, `uploads` не коммитятся
+- все секреты хранить только на сервере/в секрет-хранилище
+
+## Основные API endpoints
+
+- Auth:
+  - `POST /api/auth/register`
+  - `POST /api/auth/login`
+  - `GET /api/auth/google/start`
+  - `GET /api/auth/google/callback`
+  - `GET /api/auth/yandex/start`
+  - `GET /api/auth/yandex/callback`
+- Профиль:
+  - `GET /api/me`
+  - `PUT /api/me/tag`
+  - `POST /api/me/avatar/upload`
+  - `PUT /api/me/now-playing`
+  - `POST /api/me/now-playing/heartbeat`
+  - `DELETE /api/me/now-playing`
+- Друзья/пользователи:
+  - `GET /api/friends`
+  - `POST /api/friends`
+  - `GET /api/users/search`
+  - `GET /api/friends/{id}/now-playing`
+- Музыка/подкасты:
+  - `GET /api/music/search`
+  - `GET /api/music/stream/{video_id}`
+  - `GET /api/podcasts/search`
+  - `GET /api/podcasts/{podcast_id}/episodes`
+  - `GET /api/podcasts/stream/{stream_id}`
 - Совместное прослушивание:
-  - `/api/listen/invite`
-  - `/api/listen/incoming`
-  - `/api/listen/active`
-  - `/api/listen/{session_id}/accept`
-  - `/api/listen/{session_id}/state`
-  - `/api/listen/{session_id}/messages`
-  - `/api/listen/{session_id}/end`
+  - `POST /api/listen/invite`
+  - `GET /api/listen/incoming`
+  - `GET /api/listen/active`
+  - `POST /api/listen/{session_id}/accept`
+  - `PUT /api/listen/{session_id}/state`
+  - `GET /api/listen/{session_id}/messages`
+  - `POST /api/listen/{session_id}/messages`
+  - `POST /api/listen/{session_id}/end`
+- Voice signaling:
+  - `WS /api/listen/{session_id}/voice-signal/ws?token=<jwt>`
 
-## Production
+## Production инфраструктура (актуально)
 
 - Домен: `https://matchapp.site`
-- Фронтенд (Nginx root): `/var/www/matchapp`
-- API (local upstream): `127.0.0.1:8000`
-- systemd сервис: `matchapp-api.service`
-- Серверный код API: `/opt/cu-backend`
+- Frontend root: `/var/www/matchapp`
+- Backend код: `/opt/cu-backend`
+- API upstream: `127.0.0.1:8000`
+- Service: `matchapp-api.service`
+- Nginx site: `/etc/nginx/sites-available/matchapp`
 
-## Важно
+Полезные команды на сервере:
 
-- Секреты и локальные окружения в репозиторий не коммитятся (`.env`, `.venv`, `node_modules`, `dist`, uploads и т.д.)
-- Для фронтенда используется `VITE_API_BASE_URL` (по умолчанию: `https://matchapp.site/api`)
+```bash
+systemctl status matchapp-api.service
+journalctl -u matchapp-api.service -n 200 --no-pager
+cd /opt/cu-backend && source .venv/bin/activate && alembic upgrade head
+```
 
----
+## Деплой (кратко)
 
-Если нужен отдельный README для мобильной части (`Capacitor Android/iOS`), его можно вынести в `web-app/MOBILE.md` с инструкцией сборки apk/ipa.
+Frontend:
+
+```bash
+cd web-app
+npm run build
+rsync -az --delete dist/ root@<server>:/var/www/matchapp/
+```
+
+Backend:
+
+```bash
+rsync -az --delete --exclude '.git' --exclude '.venv' --exclude '.env' --exclude 'uploads' CU-weekend-2026/ root@<server>:/opt/cu-backend/
+ssh root@<server>
+cd /opt/cu-backend
+source .venv/bin/activate
+pip install -r requirements.txt
+alembic upgrade head
+systemctl restart matchapp-api.service
+```

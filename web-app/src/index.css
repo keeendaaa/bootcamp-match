@@ -46,6 +46,31 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+@keyframes fadeRise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes gentleFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes softGlowPulse {
+  0%, 100% { box-shadow: 0 8px 24px var(--purple-glow); }
+  50% { box-shadow: 0 12px 30px rgba(123, 47, 255, 0.45); }
+}
+
+@keyframes buttonSheen {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(120%); }
+}
+
+@keyframes dotPulse {
+  0% { transform: scale(1); opacity: 0.75; }
+  100% { transform: scale(1.45); opacity: 0; }
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -166,6 +191,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   box-shadow: 
     0 2px 16px rgba(0,0,0,0.04),
     inset 0 1px 0 rgba(255,255,255,0.8) !important;
+  animation: fadeRise 0.36s ease both;
 }
 
 .glass-panel {
@@ -237,8 +263,14 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   justify-content: center;
   box-shadow: var(--shadow-sm);
   color: var(--text-secondary);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, color 0.2s ease;
 }
 .icon-btn:active { transform: scale(0.92); }
+.icon-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.08);
+  color: var(--purple-main);
+}
 
 /* ===== AUTH ===== */
 .auth-shell {
@@ -291,6 +323,11 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.auth-social-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 22px rgba(0,0,0,0.09);
 }
 
 .auth-social-btn.google {
@@ -385,6 +422,27 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   color: #fff;
   background: var(--purple-main);
   box-shadow: 0 6px 16px var(--purple-glow);
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s ease, box-shadow 0.25s ease;
+}
+
+.auth-submit::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 28%, rgba(255, 255, 255, 0.3) 50%, transparent 72%);
+  transform: translateX(-120%);
+  pointer-events: none;
+}
+
+.auth-submit:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(123, 47, 255, 0.42);
+}
+
+.auth-submit:hover::after {
+  animation: buttonSheen 0.9s ease;
 }
 
 .auth-submit:disabled {
@@ -488,6 +546,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   align-items: center;
   gap: 6px;
   min-width: 72px;
+  animation: fadeRise 0.3s ease both;
 }
 
 .story-item-cta {
@@ -503,6 +562,11 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   border-radius: 50%;
   padding: 3px;
   background: var(--purple-main);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.story-item:hover .story-ring {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 10px 18px rgba(123, 47, 255, 0.22);
 }
 
 .story-ring.inactive { background: var(--border-light); }
@@ -575,6 +639,11 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   box-shadow: var(--shadow-card);
   border: 1px solid var(--border-light);
   overflow: hidden;
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+}
+.widget-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 28px rgba(30, 24, 52, 0.11);
 }
 
 .widget-user { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; min-width: 0; }
@@ -586,6 +655,14 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   border: 3px solid #fff; position: absolute; bottom: 0; right: -2px;
 }
 .online-dot.listening { background: var(--orange-main); }
+.online-dot.listening::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 87, 34, 0.45);
+  animation: dotPulse 1.4s ease-out infinite;
+}
 
 .widget-user-info { flex: 1; min-width: 0; }
 .widget-user-info h3 {
@@ -629,8 +706,10 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   display: flex; align-items: center; background: var(--surface-hover);
   border-radius: var(--radius-md); padding: 10px; gap: 12px; cursor: pointer;
   min-width: 0;
+  transition: transform 0.2s ease, background 0.2s ease;
 }
 .song-row:hover { background: var(--purple-pale); }
+.song-row:hover { transform: translateY(-1px); }
 .song-row img { width: 52px; height: 52px; border-radius: var(--radius-xs); object-fit: cover; }
 .song-row-info { flex: 1; min-width: 0; }
 .song-row-info h4 { margin: 0; font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -647,6 +726,11 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   width: 36px; height: 36px; border-radius: 50%; background: var(--purple-main);
   color: #fff; display: flex; align-items: center; justify-content: center;
   box-shadow: 0 4px 12px var(--purple-glow); flex-shrink: 0;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.play-btn-sm:hover {
+  transform: scale(1.06);
+  box-shadow: 0 8px 18px rgba(123, 47, 255, 0.42);
 }
 
 .share-inline-btn {
@@ -678,6 +762,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 .tag-chip {
   padding: 8px 18px; border-radius: var(--radius-pill); font-size: 13px; font-weight: 600;
   white-space: nowrap; background: var(--surface); color: var(--text-secondary); border: 1px solid var(--border-light);
+  transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
 }
 .tag-chip.active {
   background: var(--purple-main);
@@ -686,6 +771,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   box-shadow: 0 4px 12px var(--purple-glow);
 }
 .tag-chip:hover { background: var(--purple-pale); color: var(--purple-main); }
+.tag-chip:hover { transform: translateY(-1px); }
 .tag-chip.active {
   background: var(--purple-main);
   color: #fff;
@@ -693,8 +779,9 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   box-shadow: 0 4px 12px var(--purple-glow);
 }
 
-.trending-item { display: flex; align-items: center; padding: 10px 24px; gap: 14px; cursor: pointer; }
+.trending-item { display: flex; align-items: center; padding: 10px 24px; gap: 14px; cursor: pointer; transition: transform 0.2s ease, background 0.2s ease; }
 .trending-item:hover { background: var(--surface-hover); }
+.trending-item:hover { transform: translateY(-1px); }
 .trending-item img { width: 56px; height: 56px; border-radius: var(--radius-sm); object-fit: cover; }
 .trending-info { flex: 1; min-width: 0; }
 .trending-info h4 {
@@ -779,7 +866,10 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   background: var(--purple-deep); border-radius: var(--radius-md);
   padding: 10px 14px; display: flex; align-items: center; gap: 12px;
   color: #fff; box-shadow: 0 8px 24px var(--purple-glow); cursor: pointer;
+  animation: softGlowPulse 2.8s ease-in-out infinite;
+  transition: transform 0.2s ease;
 }
+.mini-player:hover { transform: translateY(-2px); }
 .mini-player img { width: 44px; height: 44px; border-radius: var(--radius-xs); object-fit: cover; }
 .mini-player .mp-info { flex: 1; min-width: 0; }
 .mini-player .mp-info h4 { margin: 0; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -842,11 +932,17 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   border-radius: 20px;
   transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
 }
+.nav-item:hover {
+  transform: translateY(-2px);
+}
 .nav-item span { font-size: 11px; font-weight: 600; color: var(--text-muted); transition: color 0.2s ease; z-index: 1; }
 .nav-item.active span { color: var(--purple-main); }
 .nav-icon-wrap { width: 48px; height: 32px; border-radius: var(--radius-pill); display: flex; align-items: center; justify-content: center; color: var(--text-muted); z-index: 1; }
 .nav-item.active .nav-icon-wrap { color: var(--purple-main); }
 .nav-item.active { background: transparent; }
+.nav-item.active .nav-icon-wrap {
+  animation: gentleFloat 1.8s ease-in-out infinite;
+}
 
 @keyframes navDockIn {
   from { transform: translateY(10px); opacity: 0; }
@@ -1023,6 +1119,11 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255,255,255,0.1);
   position: relative;
+  transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+.np-ctrl-btn:hover {
+  transform: translateY(-2px);
+  background: rgba(255,255,255,0.14);
 }
 
 .np-ctrl-btn.main {
@@ -1078,6 +1179,11 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   color: #fff; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; font-weight: 600;
   white-space: nowrap;
   line-height: 1;
+  transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+.np-chip:hover {
+  transform: translateY(-1px);
+  background: rgba(255,255,255,0.14);
 }
 .np-chip.liked {
   border-color: rgba(255, 167, 69, 0.6);
@@ -1171,6 +1277,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   border: 1px solid rgba(145, 160, 220, 0.35);
   box-shadow: 0 -20px 50px rgba(3, 8, 23, 0.5);
   color: #142038;
+  animation: fadeRise 0.28s ease both;
 }
 .friend-profile-sheet { max-height: 88%; }
 .podcast-episodes-sheet { max-height: 86%; }
@@ -1334,11 +1441,19 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   padding: 10px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, transform 0.2s ease;
 }
 
 .song-picker-item:hover {
   background: var(--surface-hover);
+  transform: translateY(-1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 .song-picker-item img {
