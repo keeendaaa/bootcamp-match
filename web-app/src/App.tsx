@@ -2517,6 +2517,9 @@ function DiscoverScreen({
   const [episodesLoading, setEpisodesLoading] = useState(false);
   const [episodesError, setEpisodesError] = useState('');
   const [showAll, setShowAll] = useState(false);
+  const searchCacheRef = useRef<Map<string, { ts: number; items: DiscoverItem[] }>>(new Map());
+  const podcastEpisodesCacheRef = useRef<Map<string, { ts: number; items: Song[] }>>(new Map());
+  const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 
   useEffect(() => {
     setRemoteSongs([]);
@@ -2537,6 +2540,12 @@ function DiscoverScreen({
     setEpisodesLoading(true);
     try {
       const accessToken = isDemoMode ? undefined : token;
+      const cacheKey = podcast.podcastId || `${podcast.title}|${podcast.artist}`;
+      const cached = podcastEpisodesCacheRef.current.get(cacheKey);
+      if (cached && Date.now() - cached.ts < SEARCH_CACHE_TTL_MS) {
+        setEpisodes(cached.items);
+        return;
+      }
       if (podcast.podcastId) {
         const response = await apiRequest<ApiPodcastEpisodeItem[]>(
           `/podcasts/${encodeURIComponent(podcast.podcastId)}/episodes?limit=30`,
@@ -2552,8 +2561,11 @@ function DiscoverScreen({
           streamUrl: ep.stream_url,
         }));
         setEpisodes(mapped);
+        podcastEpisodesCacheRef.current.set(cacheKey, { ts: Date.now(), items: mapped });
       } else if (podcast.streamUrl) {
-        setEpisodes([{ ...podcast }]);
+        const single = [{ ...podcast }];
+        setEpisodes(single);
+        podcastEpisodesCacheRef.current.set(cacheKey, { ts: Date.now(), items: single });
       } else {
         setEpisodesError('Не удалось получить список выпусков');
       }
@@ -2576,6 +2588,14 @@ function DiscoverScreen({
       ? (mode === 'podcasts' ? PODCAST_TAG_QUERY_MAP[activeTag] : TRACK_TAG_QUERY_MAP[activeTag]) || activeTag
       : '';
     const effectiveQuery = effectiveTagQuery || (trimmed.length >= 2 ? trimmed : mode === 'podcasts' ? 'top podcasts' : 'top hits');
+    const cacheKey = `${mode}::${effectiveQuery.toLowerCase()}`;
+    const cached = searchCacheRef.current.get(cacheKey);
+    if (cached && Date.now() - cached.ts < SEARCH_CACHE_TTL_MS) {
+      setLoading(false);
+      setRemoteSongs(cached.items);
+      setHasRemoteLoaded(true);
+      return;
+    }
 
     let cancelled = false;
     const timer = setTimeout(async () => {
@@ -2618,6 +2638,7 @@ function DiscoverScreen({
           }));
         }
         if (cancelled) return;
+        searchCacheRef.current.set(cacheKey, { ts: Date.now(), items: mapped });
         setRemoteSongs(mapped);
         setHasRemoteLoaded(true);
       } catch (err) {
