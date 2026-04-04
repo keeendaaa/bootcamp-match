@@ -2402,7 +2402,7 @@ function ProfileScreen({
           <div className="profile-stat"><span className="num">{stats.likes}</span><span className="label">Лайки</span></div>
         </div>
       </div>
-      <div className="section-header"><h3 className="section-title">Загруженные треки</h3></div>
+      <div className="section-header"><h3 className="section-title">Последние проигранные треки</h3></div>
       {uploadedSongs.map((song) => (
         <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
           <img src={song.cover} alt="" />
@@ -2415,7 +2415,7 @@ function ProfileScreen({
           </button>
         </div>
       ))}
-      {uploadedSongs.length === 0 && <div className="search-status">Загруженные в этой сессии треки появятся здесь</div>}
+      {uploadedSongs.length === 0 && <div className="search-status">Здесь будут появляться последние треки, которые вы слушали</div>}
       <div className="section-header"><h3 className="section-title">Лайкнутые треки</h3></div>
       {likedSongs.slice(0, 20).map((song) => (
         <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
