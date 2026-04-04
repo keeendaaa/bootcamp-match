@@ -154,8 +154,17 @@ class SessionPublic(BaseModel):
     updated_at: str | None = None
 
 
+class DirectMessageSongPayload(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    artist: str | None = Field(default=None, max_length=255)
+    cover_url: str | None = Field(default=None, max_length=500)
+    stream_url: str | None = Field(default=None, max_length=500)
+    duration: str | None = Field(default=None, max_length=32)
+
+
 class DirectMessageCreate(BaseModel):
-    text: str = Field(min_length=1, max_length=1000)
+    text: str | None = Field(default=None, max_length=1000)
+    song: DirectMessageSongPayload | None = None
 
 
 class DirectMessagePublic(BaseModel):
@@ -163,6 +172,7 @@ class DirectMessagePublic(BaseModel):
     sender_id: int
     recipient_id: int
     text: str
+    song: DirectMessageSongPayload | None = None
     created_at: str
 
 

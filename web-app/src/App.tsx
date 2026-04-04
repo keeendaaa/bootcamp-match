@@ -65,7 +65,15 @@ type ApiDirectMessage = {
   sender_id: number;
   recipient_id: number;
   text: string;
+  song?: ApiDirectMessageSong | null;
   created_at: string;
+};
+type ApiDirectMessageSong = {
+  title: string;
+  artist?: string | null;
+  cover_url?: string | null;
+  stream_url?: string | null;
+  duration?: string | null;
 };
 type ApiDirectThread = {
   friend: ApiUser;
@@ -250,6 +258,16 @@ const mapDirectMessageToChatMessage = (message: ApiDirectMessage): ChatMessage =
   senderId: message.sender_id,
   text: message.text,
   time: formatChatTime(message.created_at),
+  songShare: message.song
+    ? {
+        id: 6_000_000 + message.id,
+        title: trimSongTitle(message.song.title),
+        artist: message.song.artist || 'Unknown Artist',
+        cover: message.song.cover_url || SONGS[message.id % SONGS.length].cover,
+        duration: message.song.duration || '—',
+        streamUrl: message.song.stream_url || undefined,
+      }
+    : undefined,
 });
 
 const mapApiUserToFriend = (user: ApiUser, idx: number): Friend => ({
@@ -1972,7 +1990,9 @@ function ChatListScreen({ threads, onOpenChat }: { threads: ChatThread[]; onOpen
       </div>
       {threads.map((thread) => {
         const lastMsg = thread.messages[thread.messages.length - 1];
-        const preview = lastMsg?.text?.trim() || 'Сообщений пока нет';
+        const preview = lastMsg?.songShare
+          ? '🎵 Поделился треком'
+          : (lastMsg?.text?.trim() || 'Сообщений пока нет');
         return (
           <motion.div className="chat-item" key={thread.friend.id} onClick={() => onOpenChat(thread)} whileTap={{ scale: 0.98 }}>
             <div className="chat-avatar-wrap">
@@ -2015,6 +2035,10 @@ function ChatDetail({
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [chatError, setChatError] = useState('');
+  const [songPicker, setSongPicker] = useState(false);
+  const [songQuery, setSongQuery] = useState('');
+  const [songSearchLoading, setSongSearchLoading] = useState(false);
+  const [songResults, setSongResults] = useState<Song[]>([]);
   const lastDirectMessageIdRef = useRef(0);
 
   useEffect(() => {
@@ -2057,6 +2081,41 @@ function ChatDetail({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread.friend.id, token]);
 
+  useEffect(() => {
+    if (!songPicker) return;
+    const trimmed = songQuery.trim();
+    const effectiveQuery = trimmed.length >= 2 ? trimmed : 'top hits';
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setSongSearchLoading(true);
+      try {
+        const results = await apiRequest<ApiMusicSearchItem[]>(
+          `/music/search?q=${encodeURIComponent(effectiveQuery)}&limit=15`,
+          {},
+          token
+        );
+        if (cancelled) return;
+        const mapped: Song[] = results.map((item, idx) => ({
+          id: 7_000_000 + idx,
+          title: trimSongTitle(item.title),
+          artist: item.artist || 'Unknown Artist',
+          cover: item.cover_url || SONGS[idx % SONGS.length].cover,
+          duration: item.duration || '—',
+          streamUrl: item.stream_url || undefined,
+        }));
+        setSongResults(mapped);
+      } catch {
+        if (!cancelled) setSongResults([]);
+      } finally {
+        if (!cancelled) setSongSearchLoading(false);
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [songPicker, songQuery, token]);
+
   const sendMsg = async () => {
     const text = input.trim();
     if (!text || sending) return;
@@ -2078,6 +2137,41 @@ function ChatDetail({
       setInput('');
     } catch (err) {
       setChatError(formatUserFacingError(err, 'Не удалось отправить сообщение'));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const sendSong = async (song: Song) => {
+    if (sending) return;
+    setSending(true);
+    setChatError('');
+    try {
+      const created = await apiRequest<ApiDirectMessage>(
+        `/chats/${thread.friend.id}/messages`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            text: `🎵 ${song.title}`,
+            song: {
+              title: song.title,
+              artist: song.artist,
+              cover_url: song.cover,
+              stream_url: song.streamUrl || null,
+              duration: song.duration,
+            },
+          }),
+        },
+        token
+      );
+      const next = mapDirectMessageToChatMessage(created);
+      setMsgs((prev) => [...prev, next]);
+      lastDirectMessageIdRef.current = Math.max(lastDirectMessageIdRef.current, next.id);
+      onThreadActivity(thread.friend.id, next, 0);
+      setSongPicker(false);
+      setSongQuery('');
+    } catch (err) {
+      setChatError(formatUserFacingError(err, 'Не удалось отправить трек'));
     } finally {
       setSending(false);
     }
@@ -2116,7 +2210,44 @@ function ChatDetail({
         })}
       </div>
 
+      <AnimatePresence>
+        {songPicker && (
+          <motion.div className="song-picker"
+            initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+            transition={{ type: 'spring', bounce: 0.12 }}
+          >
+            <div className="song-picker-header">
+              <h4>Поделиться треком</h4>
+              <button className="icon-btn glass-btn-sm" onClick={() => setSongPicker(false)}><X size={18} /></button>
+            </div>
+            <div className="search-bar glass-inset" style={{ marginBottom: 10 }}>
+              <Search size={16} />
+              <input
+                placeholder="Найти трек..."
+                value={songQuery}
+                onChange={(e) => setSongQuery(e.target.value)}
+              />
+            </div>
+            {songSearchLoading && <div className="search-status">Ищем треки...</div>}
+            {!songSearchLoading && songResults.length === 0 && <div className="search-status">Ничего не найдено</div>}
+            {!songSearchLoading && songResults.map((song) => (
+              <motion.div key={`${song.id}-${song.title}`} className="song-picker-item" whileTap={{ scale: 0.97 }} onClick={() => void sendSong(song)}>
+                <img src={song.cover} alt="" />
+                <div className="song-picker-info">
+                  <h5>{song.title}</h5>
+                  <p>{song.artist}</p>
+                </div>
+                <Send size={16} color="var(--orange-main)" />
+              </motion.div>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="chat-input-bar">
+        <button className="icon-btn glass-btn-sm" onClick={() => setSongPicker(true)}>
+          <Plus size={18} />
+        </button>
         <input placeholder="Введите сообщение..." value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void sendMsg(); }}

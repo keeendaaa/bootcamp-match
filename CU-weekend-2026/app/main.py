@@ -21,6 +21,7 @@ from .schemas import (
     AvatarUpdateRequest,
     DirectMessageCreate,
     DirectMessagePublic,
+    DirectMessageSongPayload,
     DirectThreadPublic,
     FriendAddRequest,
     LikedTrackPublic,
@@ -129,11 +130,21 @@ def session_to_public(session: ListenSession, db: Session) -> SessionPublic:
 
 def direct_message_to_public(message: DirectMessage) -> DirectMessagePublic:
     created_at = message.created_at.replace(tzinfo=timezone.utc).isoformat() if message.created_at else ""
+    song_payload = None
+    if message.song_title:
+        song_payload = DirectMessageSongPayload(
+            title=message.song_title,
+            artist=message.song_artist,
+            cover_url=message.song_cover_url,
+            stream_url=message.song_stream_url,
+            duration=message.song_duration,
+        )
     return DirectMessagePublic(
         id=message.id,
         sender_id=message.sender_id,
         recipient_id=message.recipient_id,
         text=message.text,
+        song=song_payload,
         created_at=created_at,
     )
 
@@ -505,10 +516,22 @@ def send_direct_message(
     if not is_friend(db, current_user.id, friend_id):
         raise HTTPException(status_code=403, detail="Not friends")
 
+    text = (payload.text or "").strip()
+    song = payload.song
+    if not text and not song:
+        raise HTTPException(status_code=400, detail="Message text or song is required")
+    if song and not text:
+        text = f'🎵 {song.title}'
+
     message = DirectMessage(
         sender_id=current_user.id,
         recipient_id=friend_id,
-        text=payload.text.strip(),
+        text=text,
+        song_title=song.title if song else None,
+        song_artist=song.artist if song else None,
+        song_cover_url=song.cover_url if song else None,
+        song_stream_url=song.stream_url if song else None,
+        song_duration=song.duration if song else None,
     )
     db.add(message)
     db.commit()
