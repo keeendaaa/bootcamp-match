@@ -4,6 +4,7 @@
 # Root local assets
 /photos/
 /Frame 1597880375.png
+/_env
 
 # Frontend
 web-app/node_modules/
