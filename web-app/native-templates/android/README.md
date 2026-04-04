@@ -38,5 +38,5 @@ Manifest fragments:
 
 Важно:
 
-- Этот шаблон уже открывает React-приложение по deeplink'у и передает friend/track context.
+- Этот шаблон уже открывает React-приложение по deeplink'у и передает friend/track context на экран друзей.
 - Для Android artwork и avatar пока идут как placeholders. Если нужен live remote artwork в home widget, следующим шагом лучше переходить на Glance + фоновые image-cache jobs.

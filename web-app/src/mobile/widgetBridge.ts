@@ -3,6 +3,7 @@ import type { Friend } from '../data/mockData';
 import { buildWidgetDeepLink, buildWidgetWebUrl } from './deepLinks';
 
 const WIDGET_STORAGE_KEY = 'match_friends_widget_snapshot';
+export const WIDGET_SNAPSHOT_REFRESH_MS = 60_000;
 
 export interface WidgetTrackSnapshot {
   id: number;
@@ -102,7 +103,7 @@ export const buildFriendsWidgetSnapshot = (
           title: featuredTrack.title,
           artist: featuredTrack.artist,
           cover: featuredTrack.cover,
-          cta: `Начать совместное прослушивание с ${featuredFriend.name}?`,
+          cta: `${featuredFriend.name} слушает это прямо сейчас`,
           deeplink: buildWidgetDeepLink({
             friendId: featuredFriend.id,
             trackId: featuredTrack.id,

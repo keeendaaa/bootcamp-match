@@ -16,7 +16,7 @@ import {
   parseWidgetOpenRequest,
   type WidgetOpenRequest,
 } from './mobile/deepLinks';
-import { publishFriendsWidgetSnapshot } from './mobile/widgetBridge';
+import { publishFriendsWidgetSnapshot, WIDGET_SNAPSHOT_REFRESH_MS } from './mobile/widgetBridge';
 import './index.css';
 
 type Tab = 'friends' | 'discover' | 'chat' | 'profile';
@@ -97,8 +97,8 @@ const API_ORIGIN = API_BASE.replace(/\/api$/, '');
 const AUTH_STORAGE_KEY = 'match_backend_token';
 const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksandr.jpg', '/avatars/galya.jpg'];
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
-const FRIENDS_POLL_INTERVAL_MS = 12_000;
-const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 30_000;
+const FRIENDS_POLL_INTERVAL_MS = 1_000;
+const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 1_000;
 
 const toUsername = (name: string) =>
   `@${name.toLowerCase().replace(/[^a-zа-я0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'user'}`;
@@ -852,21 +852,15 @@ export default function App() {
 
     const friend = findFriendById(pendingWidgetRequest.friendId);
     if (!friend) return;
-
-    const nextThread = chatThreads.find((thread) => thread.friend.id === friend.id) || {
-      friend,
-      unread: 0,
-      messages: [],
-    };
     const targetSong = friend.currentSong && (!pendingWidgetRequest.trackId || friend.currentSong.id === pendingWidgetRequest.trackId)
       ? friend.currentSong
       : friend.currentSong;
 
-    setTab('chat');
-    openChatThread(nextThread);
+    setTab('friends');
+    setOpenChat(null);
     setShareModal(null);
-    setNpOpen(false);
-    setListeningWith(friend);
+    setNpOpen(Boolean(targetSong));
+    setListeningWith(targetSong ? friend : null);
     setActiveQueue(null);
     setQueueIndex(null);
     setPlayerError('');
@@ -883,7 +877,7 @@ export default function App() {
 
     setPendingWidgetRequest(null);
     clearHandledWidgetParams();
-  }, [pendingWidgetRequest, token, currentUser, chatThreads, friends, findFriendById, selectSongInPlayer, startPlayback, openChatThread]);
+  }, [pendingWidgetRequest, token, currentUser, friends, findFriendById, selectSongInPlayer, startPlayback]);
 
   const toggleLike = async (song: Song): Promise<boolean> => {
     if (!token) return false;
@@ -1062,6 +1056,16 @@ export default function App() {
     if (!currentUser) return;
     void publishFriendsWidgetSnapshot(friends, currentUser.name).catch(() => undefined);
   }, [friends, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const timer = window.setInterval(() => {
+      void publishFriendsWidgetSnapshot(friendsRef.current, currentUser.name).catch(() => undefined);
+    }, WIDGET_SNAPSHOT_REFRESH_MS);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [currentUser]);
 
   useEffect(() => {
     if (!token || !currentUser) return;
