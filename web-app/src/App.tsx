@@ -1544,8 +1544,10 @@ export default function App() {
             onToggleLike={() => toggleLike(currentSong)}
             onToggleShuffle={toggleShuffle}
             onCycleRepeat={cycleRepeat}
+            token={token}
             currentUserId={currentUser.id}
             sessionActive={Boolean(activeSession)}
+            sessionId={activeSession?.id ?? null}
             sessionMessages={sessionMessages}
             onSendSessionMessage={sendSessionMessage}
             onLeaveSession={leaveSession}
@@ -2513,7 +2515,7 @@ function BottomNav({ tab, onChangeTab }: { tab: Tab; onChangeTab: (t: Tab) => vo
 }
 
 /* ========== NOW PLAYING FULLSCREEN (with scrollable chat) ========== */
-function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked, shuffleOn, repeatMode, listeningWith, onClose, onToggle, onNext, onPrev, onSeek, onToggleLike, onToggleShuffle, onCycleRepeat, currentUserId, sessionActive, sessionMessages, onSendSessionMessage, onLeaveSession, onShare }: {
+function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked, shuffleOn, repeatMode, listeningWith, onClose, onToggle, onNext, onPrev, onSeek, onToggleLike, onToggleShuffle, onCycleRepeat, token, currentUserId, sessionActive, sessionId, sessionMessages, onSendSessionMessage, onLeaveSession, onShare }: {
   song: Song;
   isPlaying: boolean;
   currentTimeSec: number;
@@ -2530,8 +2532,10 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
   onToggleLike: () => Promise<boolean>;
   onToggleShuffle: () => void;
   onCycleRepeat: () => void;
+  token: string;
   currentUserId: number;
   sessionActive: boolean;
+  sessionId: number | null;
   sessionMessages: ApiSessionMessage[];
   onSendSessionMessage: (text: string) => Promise<void>;
   onLeaveSession: () => Promise<void>;
@@ -2540,12 +2544,168 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
   const trackRef = useRef<HTMLDivElement | null>(null);
   const draggingSeekRef = useRef(false);
   const [micActive, setMicActive] = useState(false);
+  const [voiceError, setVoiceError] = useState('');
   const [chatInput, setChatInput] = useState('');
+  const wsRef = useRef<WebSocket | null>(null);
+  const peerRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const micEnabledRef = useRef(false);
+
+  const teardownVoice = (stopLocal: boolean) => {
+    wsRef.current?.close();
+    wsRef.current = null;
+    peerRef.current?.close();
+    peerRef.current = null;
+    if (stopLocal) {
+      localStreamRef.current?.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+      micEnabledRef.current = false;
+      setMicActive(false);
+    }
+    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+  };
+
+  const sendVoiceSignal = (payload: unknown) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify(payload));
+  };
+
+  const ensurePeerConnection = () => {
+    if (peerRef.current) return peerRef.current;
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
+    });
+    pc.onicecandidate = (event) => {
+      if (!event.candidate) return;
+      sendVoiceSignal({ type: 'ice', candidate: event.candidate });
+    };
+    pc.ontrack = (event) => {
+      if (!remoteAudioRef.current) return;
+      const [stream] = event.streams;
+      if (!stream) return;
+      remoteAudioRef.current.srcObject = stream;
+      void remoteAudioRef.current.play().catch(() => undefined);
+    };
+    peerRef.current = pc;
+    return pc;
+  };
+
+  const ensureLocalAudio = async () => {
+    if (!localStreamRef.current) {
+      localStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+    const pc = ensurePeerConnection();
+    const stream = localStreamRef.current;
+    for (const track of stream.getAudioTracks()) {
+      track.enabled = micEnabledRef.current;
+      const hasSender = pc.getSenders().some((sender) => sender.track?.id === track.id);
+      if (!hasSender) pc.addTrack(track, stream);
+    }
+  };
+
+  const negotiateOffer = async () => {
+    const pc = ensurePeerConnection();
+    if (pc.signalingState !== 'stable') return;
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    if (pc.localDescription) {
+      sendVoiceSignal({ type: 'offer', sdp: pc.localDescription });
+    }
+  };
+
+  const toggleVoice = async () => {
+    if (!sessionActive || !sessionId) return;
+    setVoiceError('');
+    if (micEnabledRef.current) {
+      micEnabledRef.current = false;
+      setMicActive(false);
+      localStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = false; });
+      sendVoiceSignal({ type: 'mute', muted: true });
+      return;
+    }
+    try {
+      micEnabledRef.current = true;
+      setMicActive(true);
+      await ensureLocalAudio();
+      await negotiateOffer();
+      sendVoiceSignal({ type: 'mute', muted: false });
+    } catch {
+      micEnabledRef.current = false;
+      setMicActive(false);
+      setVoiceError('Не удалось получить доступ к микрофону');
+    }
+  };
+
   const sendChat = () => {
     if (!sessionActive || !chatInput.trim()) return;
     void onSendSessionMessage(chatInput.trim());
     setChatInput('');
   };
+
+  useEffect(() => {
+    if (!sessionActive || !sessionId || !token) {
+      teardownVoice(true);
+      return;
+    }
+
+    setVoiceError('');
+    const wsBase = API_BASE.replace(/^http/i, (prefix) => (prefix.toLowerCase() === 'https' ? 'wss' : 'ws'));
+    const wsUrl = `${wsBase}/listen/${sessionId}/voice-signal/ws?token=${encodeURIComponent(token)}`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      if (!micEnabledRef.current) return;
+      void ensureLocalAudio().then(() => negotiateOffer()).catch(() => undefined);
+    };
+
+    ws.onmessage = (event) => {
+      void (async () => {
+        try {
+          const envelope = JSON.parse(event.data) as { from_user_id?: number; data?: any };
+          if (envelope.from_user_id === currentUserId) return;
+          const signal = envelope.data || {};
+          const pc = ensurePeerConnection();
+
+          if (signal.type === 'offer' && signal.sdp) {
+            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            if (!localStreamRef.current && !pc.getTransceivers().some((item) => item.receiver.track?.kind === 'audio')) {
+              pc.addTransceiver('audio', { direction: 'recvonly' });
+            }
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            if (pc.localDescription) sendVoiceSignal({ type: 'answer', sdp: pc.localDescription });
+            return;
+          }
+
+          if (signal.type === 'answer' && signal.sdp) {
+            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            return;
+          }
+
+          if (signal.type === 'ice' && signal.candidate) {
+            await pc.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(() => undefined);
+          }
+        } catch {
+          // noop: voice signaling is best-effort in MVP
+        }
+      })();
+    };
+
+    ws.onclose = () => {
+      wsRef.current = null;
+    };
+
+    return () => {
+      teardownVoice(true);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionActive, sessionId, token, currentUserId]);
 
   const progressPercent = durationSec > 0 ? Math.min(100, (currentTimeSec / durationSec) * 100) : 0;
 
@@ -2651,12 +2811,13 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
           <motion.button
             className={`mic-pill ${micActive ? 'active' : ''}`}
             whileTap={{ scale: 0.92 }}
-            onClick={() => setMicActive(!micActive)}
+            onClick={() => void toggleVoice()}
           >
             {micActive ? <MicOff size={20} /> : <Mic size={20} />}
             <span>{micActive ? 'Без звука' : 'Говорить'}</span>
           </motion.button>
         </div>
+        {voiceError && <div className="player-error" style={{ marginTop: -2, marginBottom: 10 }}>{voiceError}</div>}
 
         {/* Actions */}
         <div className="np-actions">
@@ -2715,6 +2876,7 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
           <button className="np-send-btn" onClick={sendChat}><Send size={18} /></button>
         </div>
       )}
+      <audio ref={remoteAudioRef} autoPlay playsInline />
     </motion.div>
   );
 }

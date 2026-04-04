@@ -5,7 +5,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+import jwt
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 import requests
 from sqlalchemy.orm import Session
@@ -14,6 +15,7 @@ from ytmusicapi import YTMusic
 
 from .auth import create_access_token, get_current_user, hash_password, verify_password
 from .db import get_db
+from .db import settings
 from .models import DirectMessage, Friendship, LikedTrack, ListenMessage, ListenSession, Song, User
 from .schemas import (
     AuthLoginRequest,
@@ -48,6 +50,7 @@ app = FastAPI(title="CU Weekend MVP API")
 ytmusic = YTMusic()
 STREAM_CACHE: dict[str, tuple[str, dict[str, str]]] = {}
 NOW_PLAYING_TTL_SECONDS = 40
+VOICE_WS_CONNECTIONS: dict[int, dict[int, set[WebSocket]]] = {}
 
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -164,9 +167,73 @@ def direct_message_to_public(message: DirectMessage) -> DirectMessagePublic:
     )
 
 
+def get_user_from_ws_token(token: str, db: Session) -> User | None:
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        user_id = int(payload.get("sub"))
+    except Exception:
+        return None
+    return db.query(User).filter(User.id == user_id).first()
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.websocket("/listen/{session_id}/voice-signal/ws")
+async def voice_signal_ws(websocket: WebSocket, session_id: int, token: str = Query(default="")) -> None:
+    db_gen = get_db()
+    db = next(db_gen)
+    user = get_user_from_ws_token(token, db) if token else None
+    if not user:
+        await websocket.close(code=1008)
+        db_gen.close()
+        return
+
+    session = (
+        db.query(ListenSession)
+        .filter(ListenSession.id == session_id, ListenSession.status == "accepted")
+        .first()
+    )
+    if not session:
+        await websocket.close(code=1008)
+        db_gen.close()
+        return
+    if user.id not in (session.host_id, session.guest_id):
+        await websocket.close(code=1008)
+        db_gen.close()
+        return
+
+    await websocket.accept()
+    room = VOICE_WS_CONNECTIONS.setdefault(session_id, {})
+    room.setdefault(user.id, set()).add(websocket)
+    peer_ids = [session.host_id, session.guest_id]
+    peer_ids = [uid for uid in peer_ids if uid != user.id]
+
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            message = {
+                "from_user_id": user.id,
+                "session_id": session_id,
+                "data": payload,
+            }
+            for peer_id in peer_ids:
+                for peer_ws in list(room.get(peer_id, set())):
+                    try:
+                        await peer_ws.send_json(message)
+                    except Exception:
+                        room.get(peer_id, set()).discard(peer_ws)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        room.get(user.id, set()).discard(websocket)
+        if user.id in room and not room[user.id]:
+            room.pop(user.id, None)
+        if not room:
+            VOICE_WS_CONNECTIONS.pop(session_id, None)
+        db_gen.close()
 
 
 @app.get("/music/search", response_model=list[MusicSearchItem])
