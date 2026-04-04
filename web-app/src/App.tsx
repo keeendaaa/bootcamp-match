@@ -512,16 +512,67 @@ export default function App() {
     return normalizePlayableUrl(song.streamUrl) || null;
   };
 
+  const resolveFreshPodcastSong = async (song: Song): Promise<Song | null> => {
+    const rawStream = song.streamUrl || '';
+    if (!rawStream.includes('/podcasts/stream/')) return null;
+
+    const query = `${song.title} ${song.artist}`.trim();
+    if (!query) return null;
+
+    try {
+      const accessToken = isDemoMode ? undefined : tokenRef.current || undefined;
+      const podcasts = await apiRequest<ApiPodcastSearchItem[]>(
+        `/podcasts/search?q=${encodeURIComponent(query)}&limit=8`,
+        {},
+        accessToken
+      );
+      if (!podcasts.length) return null;
+
+      const norm = (v: string) => v.toLowerCase().replace(/\s+/g, ' ').trim();
+      const artistNeedle = norm(song.artist || '');
+      const podcast =
+        podcasts.find((p) => artistNeedle && norm(p.artist || '').includes(artistNeedle)) ||
+        podcasts[0];
+      if (!podcast?.podcast_id) return null;
+
+      const episodes = await apiRequest<ApiPodcastEpisodeItem[]>(
+        `/podcasts/${encodeURIComponent(podcast.podcast_id)}/episodes?limit=20`,
+        {},
+        accessToken
+      );
+      if (!episodes.length) return null;
+
+      const titleNeedle = norm(song.title || '');
+      const episode =
+        episodes.find((ep) => titleNeedle && norm(ep.title || '').includes(titleNeedle)) ||
+        episodes[0];
+      if (!episode?.stream_url) return null;
+
+      return {
+        ...song,
+        title: episode.title || song.title,
+        artist: podcast.artist || song.artist,
+        cover: podcast.cover_url || song.cover,
+        duration: episode.duration || song.duration,
+        streamUrl: episode.stream_url,
+      };
+    } catch (err) {
+      debugLog('resolveFreshPodcastSong failed', err);
+      return null;
+    }
+  };
+
   const startPlayback = async (song: Song) => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    const streamUrl = resolveStreamUrl(song);
+    let playbackSong = song;
+    let streamUrl = resolveStreamUrl(playbackSong);
     debugLog('startPlayback called', {
-      songId: song.id,
-      title: song.title,
-      artist: song.artist,
-      rawStreamUrl: song.streamUrl,
+      songId: playbackSong.id,
+      title: playbackSong.title,
+      artist: playbackSong.artist,
+      rawStreamUrl: playbackSong.streamUrl,
       resolvedStreamUrl: streamUrl,
       isDemoMode,
     });
@@ -544,7 +595,22 @@ export default function App() {
         contentType: probe.headers.get('content-type'),
       });
       if (!probe.ok) {
-        setPlayerError('Поток недоступен');
+        const maybeRefreshed = await resolveFreshPodcastSong(playbackSong);
+        if (maybeRefreshed) {
+          playbackSong = maybeRefreshed;
+          streamUrl = resolveStreamUrl(playbackSong);
+          if (streamUrl) {
+            selectSongInPlayer(playbackSong);
+          } else {
+            setPlayerError('Поток недоступен');
+            setIsPlaying(false);
+            return;
+          }
+        } else {
+          setPlayerError('Поток недоступен');
+          setIsPlaying(false);
+          return;
+        }
       }
     } catch (err) {
       debugLog('stream probe failed', err);
@@ -552,6 +618,11 @@ export default function App() {
     if (clearNowPlayingTimerRef.current) {
       clearTimeout(clearNowPlayingTimerRef.current);
       clearNowPlayingTimerRef.current = null;
+    }
+    if (!streamUrl) {
+      setPlayerError('Поток недоступен');
+      setIsPlaying(false);
+      return;
     }
     if (audio.src !== streamUrl) {
       audio.src = streamUrl;
