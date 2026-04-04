@@ -3012,13 +3012,6 @@ function BottomNav({ tab, onChangeTab }: { tab: Tab; onChangeTab: (t: Tab) => vo
             whileHover={{ y: -2 }}
             whileTap={{ scale: 0.95 }}
           >
-            {active && (
-              <motion.div
-                className="nav-active-bg"
-                layoutId="nav-active-bg"
-                transition={{ type: 'spring', stiffness: 360, damping: 30 }}
-              />
-            )}
             <motion.div
               className="nav-icon-wrap"
               animate={{ scale: active ? 1.08 : 1, rotate: active ? 2 : 0 }}
