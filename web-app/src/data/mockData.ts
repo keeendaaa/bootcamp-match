@@ -73,5 +73,3 @@ export const CHAT_THREADS: ChatThread[] = [
     ],
   },
 ];
-
-export const TRENDING_TAGS = ['Поп', 'Рок', 'Хип-хоп', 'R&B', 'Электроника', 'Инди'];

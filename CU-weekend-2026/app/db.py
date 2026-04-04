@@ -8,6 +8,13 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"
     jwt_expires_minutes: int = 60 * 24 * 7
+    social_auth_default_origin: str | None = None
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str | None = None
+    yandex_client_id: str | None = None
+    yandex_client_secret: str | None = None
+    yandex_redirect_uri: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

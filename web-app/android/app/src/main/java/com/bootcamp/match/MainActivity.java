@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(FriendsWidgetPlugin.class);
+        registerPlugin(NowPlayingDetectorPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

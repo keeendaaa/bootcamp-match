@@ -5,17 +5,18 @@ import {
   Play, Pause, SkipForward, SkipBack,
   ChevronDown, Heart, Shuffle, Repeat,
   Share2, Send, ArrowLeft, Bell, LogOut,
-  Plus, ChevronRight,
+  Plus, ChevronRight, RefreshCw,
   Mic, MicOff, X
 } from 'lucide-react';
-import { SONGS, FRIENDS, CHAT_THREADS, TRENDING_TAGS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
-import { listenForAppUrls } from './mobile/capacitor';
+import { SONGS, FRIENDS, CHAT_THREADS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
+import { getNativePlatform, isNativeApp, listenForAppUrls } from './mobile/capacitor';
 import {
   clearHandledWidgetParams,
   getInitialWidgetOpenRequest,
   parseWidgetOpenRequest,
   type WidgetOpenRequest,
 } from './mobile/deepLinks';
+import { NowPlayingDetector, type DeviceNowPlayingTrack } from './mobile/nowPlayingDetector';
 import { publishFriendsWidgetSnapshot, WIDGET_SNAPSHOT_REFRESH_MS } from './mobile/widgetBridge';
 import './index.css';
 
@@ -101,6 +102,7 @@ const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksa
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
 const FRIENDS_POLL_INTERVAL_MS = 1_000;
 const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 1_000;
+const DEVICE_NOW_PLAYING_POLL_INTERVAL_MS = 4_000;
 const DEMO_USER: ApiUser = { id: 0, name: 'Demo User', email: 'demo@match.app', tag: 'demo', avatar_url: '/avatars/user.jpg' };
 
 const toUsername = (name: string) =>
@@ -174,6 +176,62 @@ const trackKeyOfSong = (song: Song): string => {
   }
   if (song.streamUrl) return `stream:${song.streamUrl}`;
   return `local:${song.id}:${song.title}:${song.artist}`;
+};
+
+const normalizeMatchText = (value?: string | null): string =>
+  (value || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zа-я0-9]+/gi, ' ')
+    .trim();
+
+const mapMusicSearchItemToSong = (item: ApiMusicSearchItem, idx: number): Song => ({
+  id: 8_000_000 + idx,
+  title: trimSongTitle(item.title),
+  artist: item.artist || 'Unknown Artist',
+  cover: item.cover_url || SONGS[idx % SONGS.length].cover,
+  duration: item.duration || '—',
+  streamUrl: item.stream_url || undefined,
+});
+
+const scoreSongMatch = (song: Song, title: string, artist?: string): number => {
+  const songTitle = normalizeMatchText(song.title);
+  const songArtist = normalizeMatchText(song.artist);
+  const targetTitle = normalizeMatchText(title);
+  const targetArtist = normalizeMatchText(artist);
+  if (!songTitle || !targetTitle) return 0;
+
+  let score = 0;
+
+  if (songTitle === targetTitle) score += 72;
+  else if (songTitle.includes(targetTitle) || targetTitle.includes(songTitle)) score += 52;
+
+  const titleWords = targetTitle.split(' ').filter(Boolean);
+  const songTitleWords = new Set(songTitle.split(' ').filter(Boolean));
+  const sharedTitleWords = titleWords.filter((word) => songTitleWords.has(word)).length;
+  score += Math.min(24, sharedTitleWords * 8);
+
+  if (targetArtist) {
+    if (songArtist === targetArtist) score += 30;
+    else if (songArtist.includes(targetArtist) || targetArtist.includes(songArtist)) score += 18;
+
+    const artistWords = targetArtist.split(' ').filter(Boolean);
+    const songArtistWords = new Set(songArtist.split(' ').filter(Boolean));
+    const sharedArtistWords = artistWords.filter((word) => songArtistWords.has(word)).length;
+    score += Math.min(14, sharedArtistWords * 7);
+  }
+
+  return score;
+};
+
+const pickBestSongMatch = (songs: Song[], title: string, artist?: string, threshold = 66): Song | null => {
+  let best: { song: Song; score: number } | null = null;
+  for (const song of songs) {
+    const score = scoreSongMatch(song, title, artist);
+    if (!best || score > best.score) best = { song, score };
+  }
+  return best && best.score >= threshold ? best.song : null;
 };
 
 const normalizeAvatarUrl = (raw?: string | null): string | undefined => {
@@ -451,6 +509,13 @@ export default function App() {
   const [likedTrackKeys, setLikedTrackKeys] = useState<Set<string>>(new Set());
   const [likedSongs, setLikedSongs] = useState<Song[]>([]);
   const [recentSongs, setRecentSongs] = useState<Song[]>([]);
+  const [deviceNowPlayingSupported, setDeviceNowPlayingSupported] = useState(false);
+  const [deviceNowPlayingAccessGranted, setDeviceNowPlayingAccessGranted] = useState(false);
+  const [deviceNowPlayingTrack, setDeviceNowPlayingTrack] = useState<DeviceNowPlayingTrack | null>(null);
+  const [deviceNowPlayingMatch, setDeviceNowPlayingMatch] = useState<Song | null>(null);
+  const [deviceNowPlayingLoading, setDeviceNowPlayingLoading] = useState(false);
+  const [deviceNowPlayingResolving, setDeviceNowPlayingResolving] = useState(false);
+  const [deviceNowPlayingError, setDeviceNowPlayingError] = useState('');
   const [activeSession, setActiveSession] = useState<ApiSession | null>(null);
   const [sessionMessages, setSessionMessages] = useState<ApiSessionMessage[]>([]);
   const [currentBackendSongId, setCurrentBackendSongId] = useState<number | null>(null);
@@ -476,6 +541,7 @@ export default function App() {
   const suppressSessionSyncRef = useRef(false);
   const lastAppliedSessionSongIdRef = useRef<number | null>(null);
   const lastAutoOpenedSessionIdRef = useRef<number | null>(null);
+  const lastResolvedDeviceTrackKeyRef = useRef('');
   const isDemoMode = token === DEMO_TOKEN;
 
   const currentSong = customSong || SONGS[songIndex];
@@ -646,6 +712,72 @@ export default function App() {
   const toggleShuffle = () => setShuffleOn((prev) => !prev);
   const cycleRepeat = () =>
     setRepeatMode((prev) => (prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off'));
+
+  const enqueueSong = (song: Song) => {
+    const currentSongItem = currentSongRef.current;
+    const incomingKey = trackKeyOfSong(song);
+    const currentKey = trackKeyOfSong(currentSongItem);
+
+    setActiveQueue((prev) => {
+      const baseQueue = prev && prev.length > 0 ? prev : [currentSongItem];
+      if (baseQueue.some((item) => trackKeyOfSong(item) === incomingKey)) return baseQueue;
+      if (!prev && incomingKey === currentKey) return baseQueue;
+      return [...baseQueue, song];
+    });
+    setQueueIndex((prev) => (prev === null ? 0 : prev));
+  };
+
+  const removeFromQueue = (index: number) => {
+    if (!activeQueue || activeQueue.length === 0 || queueIndex === null) return;
+    if (index === queueIndex) return;
+
+    const nextQueue = activeQueue.filter((_, itemIdx) => itemIdx !== index);
+    setActiveQueue(nextQueue.length > 0 ? nextQueue : null);
+    if (index < queueIndex) setQueueIndex(Math.max(0, queueIndex - 1));
+  };
+
+  const playFromQueue = (index: number) => {
+    if (!activeQueue || index < 0 || index >= activeQueue.length) return;
+    playSong(activeQueue[index], undefined, activeQueue, index);
+    setNpOpen(true);
+  };
+
+  const refreshDeviceNowPlaying = async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!isNativeApp() || getNativePlatform() !== 'android') {
+      setDeviceNowPlayingSupported(false);
+      setDeviceNowPlayingAccessGranted(false);
+      setDeviceNowPlayingTrack(null);
+      setDeviceNowPlayingMatch(null);
+      setDeviceNowPlayingLoading(false);
+      return;
+    }
+
+    if (!silent) setDeviceNowPlayingLoading(true);
+    try {
+      const snapshot = await NowPlayingDetector.getCurrentTrack();
+      setDeviceNowPlayingSupported(snapshot.supported);
+      setDeviceNowPlayingAccessGranted(snapshot.accessGranted);
+      setDeviceNowPlayingTrack(snapshot.track);
+      if (!snapshot.track) {
+        setDeviceNowPlayingMatch(null);
+        lastResolvedDeviceTrackKeyRef.current = '';
+      }
+      setDeviceNowPlayingError('');
+    } catch (err) {
+      setDeviceNowPlayingError(formatUserFacingError(err, 'Не удалось прочитать музыку с устройства'));
+    } finally {
+      if (!silent) setDeviceNowPlayingLoading(false);
+    }
+  };
+
+  const openDeviceAccessSettings = async () => {
+    try {
+      await NowPlayingDetector.openAccessSettings();
+    } catch (err) {
+      setDeviceNowPlayingError(formatUserFacingError(err, 'Не удалось открыть настройки доступа'));
+    }
+  };
 
   const clearNowPlayingOnBackend = async () => {
     const accessToken = tokenRef.current;
@@ -1193,6 +1325,86 @@ export default function App() {
   }, [token, currentUser, isDemoMode]);
 
   useEffect(() => {
+    if (!currentUser) return;
+    if (!isNativeApp() || getNativePlatform() !== 'android') {
+      setDeviceNowPlayingSupported(false);
+      setDeviceNowPlayingAccessGranted(false);
+      setDeviceNowPlayingTrack(null);
+      setDeviceNowPlayingMatch(null);
+      setDeviceNowPlayingLoading(false);
+      return;
+    }
+
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async (silent: boolean) => {
+      if (stop) return;
+      await refreshDeviceNowPlaying({ silent });
+      if (stop) return;
+      timer = setTimeout(() => {
+        void tick(true);
+      }, DEVICE_NOW_PLAYING_POLL_INTERVAL_MS);
+    };
+
+    void tick(false);
+
+    return () => {
+      stop = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!deviceNowPlayingTrack) {
+      setDeviceNowPlayingMatch(null);
+      setDeviceNowPlayingResolving(false);
+      lastResolvedDeviceTrackKeyRef.current = '';
+      return;
+    }
+
+    const trackKey = `${normalizeMatchText(deviceNowPlayingTrack.title)}::${normalizeMatchText(deviceNowPlayingTrack.artist)}`;
+    if (trackKey === lastResolvedDeviceTrackKeyRef.current && deviceNowPlayingMatch) return;
+
+    const localCandidates = mergeUniqueSongs([...likedSongs, ...recentSongs, ...SONGS]);
+    const localMatch = pickBestSongMatch(localCandidates, deviceNowPlayingTrack.title, deviceNowPlayingTrack.artist);
+    if (localMatch) {
+      setDeviceNowPlayingMatch(localMatch);
+      setDeviceNowPlayingResolving(false);
+      lastResolvedDeviceTrackKeyRef.current = trackKey;
+      return;
+    }
+
+    let cancelled = false;
+    setDeviceNowPlayingResolving(true);
+    setDeviceNowPlayingMatch(null);
+
+    const resolveRemotely = async () => {
+      try {
+        const query = [deviceNowPlayingTrack.title, deviceNowPlayingTrack.artist].filter(Boolean).join(' ');
+        const results = await apiRequest<ApiMusicSearchItem[]>(
+          `/music/search?q=${encodeURIComponent(query)}&limit=8`,
+          {}
+        );
+        if (cancelled) return;
+        const remoteSongs = results.map((item, idx) => mapMusicSearchItemToSong(item, idx));
+        setDeviceNowPlayingMatch(pickBestSongMatch(remoteSongs, deviceNowPlayingTrack.title, deviceNowPlayingTrack.artist, 60));
+        lastResolvedDeviceTrackKeyRef.current = trackKey;
+      } catch {
+        if (!cancelled) setDeviceNowPlayingMatch(null);
+      } finally {
+        if (!cancelled) setDeviceNowPlayingResolving(false);
+      }
+    };
+
+    void resolveRemotely();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceNowPlayingTrack, likedSongs, recentSongs, deviceNowPlayingMatch]);
+
+  useEffect(() => {
     if (!token || !currentUser) return;
     if (isDemoMode) {
       setFriends(FRIENDS);
@@ -1716,6 +1928,7 @@ export default function App() {
             onAddFriend={addFriend}
             onSearchUsers={searchUsers}
             onPlay={playSong}
+            onEnqueue={enqueueSong}
             onShare={(s) => setShareModal(s)}
             onOpenProfile={(friend) => void openFriendProfile(friend)}
           />
@@ -1725,8 +1938,18 @@ export default function App() {
             token={token}
             isDemoMode={isDemoMode}
             likedTrackKeys={likedTrackKeys}
+            deviceNowPlayingSupported={deviceNowPlayingSupported}
+            deviceNowPlayingAccessGranted={deviceNowPlayingAccessGranted}
+            deviceNowPlayingTrack={deviceNowPlayingTrack}
+            deviceNowPlayingMatch={deviceNowPlayingMatch}
+            deviceNowPlayingLoading={deviceNowPlayingLoading}
+            deviceNowPlayingResolving={deviceNowPlayingResolving}
+            deviceNowPlayingError={deviceNowPlayingError}
+            onOpenDeviceAccessSettings={() => void openDeviceAccessSettings()}
+            onRefreshDeviceNowPlaying={() => void refreshDeviceNowPlaying()}
             onToggleLike={toggleLike}
             onPlay={(s, queue, index) => playSong(s, undefined, queue, index)}
+            onEnqueue={enqueueSong}
             onShare={(s) => setShareModal(s)}
           />
         )}
@@ -1743,6 +1966,7 @@ export default function App() {
             onUploadTrack={uploadTrack}
             onUpdateTag={updateMyTag}
             onPlay={(s) => playSong(s)}
+            onEnqueue={enqueueSong}
           />
         )}
       </div>
@@ -1778,6 +2002,8 @@ export default function App() {
             isLiked={likedTrackKeys.has(trackKeyOfSong(currentSong))}
             shuffleOn={shuffleOn}
             repeatMode={repeatMode}
+            queue={activeQueue}
+            queueIndex={queueIndex}
             listeningWith={listeningWith}
             onClose={() => setNpOpen(false)}
             onToggle={toggle}
@@ -1787,6 +2013,8 @@ export default function App() {
             onToggleLike={() => toggleLike(currentSong)}
             onToggleShuffle={toggleShuffle}
             onCycleRepeat={cycleRepeat}
+            onQueueSelect={playFromQueue}
+            onQueueRemove={removeFromQueue}
             token={token}
             currentUserId={currentUser.id}
             sessionActive={Boolean(activeSession)}
@@ -1844,6 +2072,7 @@ export default function App() {
               setFriendProfile(null);
               playSong(song, friendProfile);
             }}
+            onEnqueue={enqueueSong}
             onAddSong={addFriendSongToLibrary}
           />
         )}
@@ -2115,6 +2344,7 @@ function FriendProfileModal({
   likedTrackKeys,
   onClose,
   onPlay,
+  onEnqueue,
   onAddSong,
 }: {
   friend: Friend;
@@ -2124,6 +2354,7 @@ function FriendProfileModal({
   likedTrackKeys: Set<string>;
   onClose: () => void;
   onPlay: (song: Song) => void;
+  onEnqueue: (song: Song) => void;
   onAddSong: (song: Song) => Promise<boolean>;
 }) {
   const [savingTrackKey, setSavingTrackKey] = useState<string | null>(null);
@@ -2199,6 +2430,13 @@ function FriendProfileModal({
                     <p>{song.artist} · {song.duration}</p>
                   </div>
                   <button
+                    className="icon-btn glass-btn-sm"
+                    onClick={() => onEnqueue(song)}
+                    title="Добавить в очередь"
+                  >
+                    <Plus size={16} />
+                  </button>
+                  <button
                     className="profile-avatar-btn friend-save-btn"
                     onClick={() => void handleAddSong(song)}
                     disabled={saved || saving}
@@ -2225,6 +2463,7 @@ function FriendsScreen({
   onAddFriend,
   onSearchUsers,
   onPlay,
+  onEnqueue,
   onShare,
   onOpenProfile,
 }: {
@@ -2233,6 +2472,7 @@ function FriendsScreen({
   onAddFriend: (name: string) => Promise<void>;
   onSearchUsers: (query: string) => Promise<ApiUser[]>;
   onPlay: (s: Song, f?: Friend) => void;
+  onEnqueue: (song: Song) => void;
   onShare: (s: Song) => void;
   onOpenProfile: (friend: Friend) => void;
 }) {
@@ -2365,6 +2605,9 @@ function FriendsScreen({
                 </div>
                 <button className="play-btn-sm"><Play size={14} fill="#fff" /></button>
               </div>
+              <button className="share-inline-btn" onClick={() => onEnqueue(friend.currentSong!)} title="Добавить в очередь">
+                <Plus size={14} />
+              </button>
               <button className="share-inline-btn" onClick={() => onShare(friend.currentSong!)}>
                 <Share2 size={14} />
               </button>
@@ -2381,23 +2624,50 @@ function DiscoverScreen({
   token,
   isDemoMode,
   likedTrackKeys,
+  deviceNowPlayingSupported,
+  deviceNowPlayingAccessGranted,
+  deviceNowPlayingTrack,
+  deviceNowPlayingMatch,
+  deviceNowPlayingLoading,
+  deviceNowPlayingResolving,
+  deviceNowPlayingError,
+  onOpenDeviceAccessSettings,
+  onRefreshDeviceNowPlaying,
   onToggleLike,
   onPlay,
+  onEnqueue,
   onShare,
 }: {
   token: string;
   isDemoMode: boolean;
   likedTrackKeys: Set<string>;
+  deviceNowPlayingSupported: boolean;
+  deviceNowPlayingAccessGranted: boolean;
+  deviceNowPlayingTrack: DeviceNowPlayingTrack | null;
+  deviceNowPlayingMatch: Song | null;
+  deviceNowPlayingLoading: boolean;
+  deviceNowPlayingResolving: boolean;
+  deviceNowPlayingError: string;
+  onOpenDeviceAccessSettings: () => void;
+  onRefreshDeviceNowPlaying: () => void;
   onToggleLike: (song: Song) => Promise<boolean>;
   onPlay: (s: Song, queue?: Song[], index?: number) => void;
+  onEnqueue: (song: Song) => void;
   onShare: (s: Song) => void;
 }) {
+  const [section, setSection] = useState<'music' | 'podcasts'>('music');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [remoteSongs, setRemoteSongs] = useState<Song[]>([]);
   const [hasRemoteLoaded, setHasRemoteLoaded] = useState(false);
 
   useEffect(() => {
+    if (section !== 'music') {
+      setLoading(false);
+      setRemoteSongs([]);
+      setHasRemoteLoaded(false);
+      return;
+    }
     if (!token && !isDemoMode) {
       setLoading(false);
       setRemoteSongs([]);
@@ -2446,32 +2716,109 @@ function DiscoverScreen({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, token, isDemoMode]);
+  }, [query, token, isDemoMode, section]);
 
-  const list = hasRemoteLoaded ? remoteSongs : SONGS;
+  const list = section === 'music' ? (hasRemoteLoaded ? remoteSongs : SONGS) : [];
 
   return (
     <>
+      <div className="device-now-playing-card glass-card">
+        <div className="device-now-playing-header">
+          <div>
+            <h3>Сейчас на устройстве</h3>
+            <p>Берём трек из активного плеера Android и ищем его в Match</p>
+          </div>
+          <button className="icon-btn glass-btn-sm" onClick={onRefreshDeviceNowPlaying} title="Обновить">
+            <RefreshCw size={16} />
+          </button>
+        </div>
+
+        {!deviceNowPlayingSupported && (
+          <div className="device-now-playing-empty">
+            Автоопределение доступно только в Android-сборке приложения.
+          </div>
+        )}
+
+        {deviceNowPlayingSupported && !deviceNowPlayingAccessGranted && (
+          <div className="device-now-playing-cta">
+            <p>Дайте доступ к уведомлениям, чтобы Match видел активную музыку из других приложений.</p>
+            <button className="profile-avatar-btn" onClick={onOpenDeviceAccessSettings}>
+              Открыть настройки доступа
+            </button>
+          </div>
+        )}
+
+        {deviceNowPlayingSupported && deviceNowPlayingAccessGranted && !deviceNowPlayingTrack && (
+          <div className="device-now-playing-empty">
+            {deviceNowPlayingLoading ? 'Ищем активный плеер...' : 'Сейчас на устройстве ничего не играет.'}
+          </div>
+        )}
+
+        {deviceNowPlayingTrack && (
+          <>
+            <div className="device-now-playing-track glass-inset">
+              <img
+                src={deviceNowPlayingTrack.coverDataUrl || deviceNowPlayingMatch?.cover || SONGS[0].cover}
+                alt=""
+              />
+              <div className="device-now-playing-info">
+                <h4>{deviceNowPlayingTrack.title}</h4>
+                <p>{deviceNowPlayingTrack.artist || 'Неизвестный артист'}</p>
+                <span>{deviceNowPlayingTrack.sourceApp || 'Источник не определён'}</span>
+              </div>
+            </div>
+
+            <div className="device-now-playing-match glass-inset">
+              {deviceNowPlayingResolving && (
+                <p className="device-now-playing-note">Ищем совпадение в вашей музыке и в Match...</p>
+              )}
+              {!deviceNowPlayingResolving && deviceNowPlayingMatch && (
+                <>
+                  <p className="device-now-playing-note">Найдено совпадение в Match</p>
+                  <div className="device-now-playing-actions">
+                    <button className="profile-avatar-btn" onClick={() => onPlay(deviceNowPlayingMatch)}>
+                      Слушать у нас
+                    </button>
+                    <button className="share-inline-btn device-now-playing-action" onClick={() => onEnqueue(deviceNowPlayingMatch)} title="Добавить в очередь">
+                      <Plus size={14} />
+                    </button>
+                    <button className="share-inline-btn device-now-playing-action" onClick={() => onShare(deviceNowPlayingMatch)} title="Поделиться">
+                      <Share2 size={14} />
+                    </button>
+                  </div>
+                </>
+              )}
+              {!deviceNowPlayingResolving && !deviceNowPlayingMatch && (
+                <p className="device-now-playing-note">Точное совпадение пока не найдено. Попробуйте обновить поиск, когда трек стабильно отобразится в плеере.</p>
+              )}
+            </div>
+          </>
+        )}
+
+        {deviceNowPlayingError && <div className="auth-error" style={{ marginTop: 10 }}>{deviceNowPlayingError}</div>}
+      </div>
+
       <div className="search-bar glass-inset">
         <Search size={18} />
         <input
-          placeholder="Поиск треков и артистов..."
+          placeholder={section === 'music' ? 'Поиск треков и артистов...' : 'Поиск подкастов...'}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
       </div>
-      {loading && <div className="search-status">Ищем треки в YouTube Music...</div>}
-      {!loading && query.trim().length < 2 && list.length > 0 && (
-        <div className="search-status">Популярное из YouTube Music</div>
-      )}
-      {!loading && list.length === 0 && (
+      {loading && section === 'music' && <div className="search-status">Ищем треки в YouTube Music...</div>}
+      {!loading && section === 'music' && list.length === 0 && (
         <div className="search-status">Ничего не найдено</div>
       )}
+      {!loading && section === 'podcasts' && (
+        <div className="search-status">Раздел подкастов скоро появится</div>
+      )}
       <div className="tag-row">
-        {TRENDING_TAGS.map(tag => (<button className="tag-chip" key={tag}>{tag}</button>))}
+        <button className={`tag-chip ${section === 'music' ? 'active' : ''}`} onClick={() => setSection('music')}>Музыка</button>
+        <button className={`tag-chip ${section === 'podcasts' ? 'active' : ''}`} onClick={() => setSection('podcasts')}>Подкасты</button>
       </div>
       <div className="section-header">
-        <h3 className="section-title">В тренде</h3>
+        <h3 className="section-title">{section === 'music' ? 'Музыка' : 'Подкасты'}</h3>
         <button className="section-more">Ещё <ChevronRight size={16} /></button>
       </div>
       {list.map((song, idx) => (
@@ -2489,6 +2836,7 @@ function DiscoverScreen({
           >
             <Heart size={16} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
           </motion.button>
+          <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
           <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
           <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
             <Play size={14} fill="#fff" />
@@ -2816,6 +3164,7 @@ function ProfileScreen({
   onUploadTrack,
   onUpdateTag,
   onPlay,
+  onEnqueue,
 }: {
   currentUser: ApiUser;
   stats: ApiProfileStats;
@@ -2827,6 +3176,7 @@ function ProfileScreen({
   onUploadTrack: (file: File) => Promise<Song>;
   onUpdateTag: (tag: string) => Promise<void>;
   onPlay: (song: Song) => void;
+  onEnqueue: (song: Song) => void;
 }) {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const trackInputRef = useRef<HTMLInputElement | null>(null);
@@ -2950,6 +3300,12 @@ function ProfileScreen({
           >
             <Heart size={18} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
           </motion.button>
+          <button className="icon-btn glass-btn-sm" onClick={(e) => {
+            e.stopPropagation();
+            onEnqueue(song);
+          }}>
+            <Plus size={16} />
+          </button>
           <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
             e.stopPropagation();
             onPlay(song);
@@ -2964,6 +3320,12 @@ function ProfileScreen({
         <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
           <img src={song.cover} alt="" />
           <div className="trending-info"><h4>{song.title}</h4><p>{song.artist} · {song.duration}</p></div>
+          <button className="icon-btn glass-btn-sm" onClick={(e) => {
+            e.stopPropagation();
+            onEnqueue(song);
+          }}>
+            <Plus size={16} />
+          </button>
           <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
             e.stopPropagation();
             onPlay(song);
@@ -3002,7 +3364,7 @@ function BottomNav({ tab, onChangeTab }: { tab: Tab; onChangeTab: (t: Tab) => vo
 }
 
 /* ========== NOW PLAYING FULLSCREEN (with scrollable chat) ========== */
-function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked, shuffleOn, repeatMode, listeningWith, onClose, onToggle, onNext, onPrev, onSeek, onToggleLike, onToggleShuffle, onCycleRepeat, token, currentUserId, sessionActive, sessionId, sessionMessages, onSendSessionMessage, onLeaveSession, onShare }: {
+function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked, shuffleOn, repeatMode, queue, queueIndex, listeningWith, onClose, onToggle, onNext, onPrev, onSeek, onToggleLike, onToggleShuffle, onCycleRepeat, onQueueSelect, onQueueRemove, token, currentUserId, sessionActive, sessionId, sessionMessages, onSendSessionMessage, onLeaveSession, onShare }: {
   song: Song;
   isPlaying: boolean;
   currentTimeSec: number;
@@ -3010,6 +3372,8 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
   isLiked: boolean;
   shuffleOn: boolean;
   repeatMode: RepeatMode;
+  queue: Song[] | null;
+  queueIndex: number | null;
   listeningWith: Friend | null;
   onClose: () => void;
   onToggle: () => void;
@@ -3019,6 +3383,8 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
   onToggleLike: () => Promise<boolean>;
   onToggleShuffle: () => void;
   onCycleRepeat: () => void;
+  onQueueSelect: (index: number) => void;
+  onQueueRemove: (index: number) => void;
   token: string;
   currentUserId: number;
   sessionActive: boolean;
@@ -3038,6 +3404,7 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const micEnabledRef = useRef(false);
+  const visibleQueue = queue && queue.length > 0 ? queue : [song];
 
   const teardownVoice = (stopLocal: boolean) => {
     wsRef.current?.close();
@@ -3323,6 +3690,49 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
               <X size={16} /> Выйти из эфира
             </motion.button>
           )}
+        </div>
+
+        <div className="np-queue-section">
+          <div className="np-queue-header">
+            <h4>Очередь</h4>
+            <span>{visibleQueue.length} трек{visibleQueue.length === 1 ? '' : visibleQueue.length < 5 ? 'а' : 'ов'}</span>
+          </div>
+          <div className="np-queue-list">
+            {visibleQueue.map((queueSong, index) => {
+              const isCurrent = queueIndex !== null
+                ? index === queueIndex
+                : trackKeyOfSong(queueSong) === trackKeyOfSong(song);
+              return (
+                <div
+                  key={`${trackKeyOfSong(queueSong)}-${index}`}
+                  className={`np-queue-item ${isCurrent ? 'current' : ''}`}
+                  onClick={() => onQueueSelect(index)}
+                >
+                  <div className="np-queue-main">
+                    <img src={queueSong.cover} alt="" />
+                    <div className="np-queue-info">
+                      <h5>{queueSong.title}</h5>
+                      <p>{queueSong.artist}</p>
+                    </div>
+                  </div>
+                  {isCurrent ? (
+                    <span className="np-queue-current">Сейчас</span>
+                  ) : (
+                    <button
+                      className="np-queue-remove"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onQueueRemove(index);
+                      }}
+                      title="Убрать из очереди"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* ===== INLINE CHAT SECTION ===== */}
