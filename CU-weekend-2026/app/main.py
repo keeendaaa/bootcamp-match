@@ -3,6 +3,7 @@ import re
 import shutil
 import uuid
 import base64
+import time
 from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 from urllib.parse import urlparse
@@ -54,7 +55,13 @@ app = FastAPI(title="CU Weekend MVP API")
 ytmusic = YTMusic()
 STREAM_CACHE: dict[str, tuple[str, dict[str, str]]] = {}
 PODCAST_STREAM_CACHE: dict[str, str] = {}
+PODCAST_SEARCH_CACHE: dict[str, tuple[float, list[PodcastSearchItem]]] = {}
+PODCAST_LOOKUP_CACHE: dict[str, tuple[float, str]] = {}
+PODCAST_EPISODES_CACHE: dict[str, tuple[float, list[PodcastEpisodeItem]]] = {}
 NOW_PLAYING_TTL_SECONDS = 40
+PODCAST_SEARCH_TTL_SECONDS = 300
+PODCAST_LOOKUP_TTL_SECONDS = 600
+PODCAST_EPISODES_TTL_SECONDS = 300
 VOICE_WS_CONNECTIONS: dict[int, dict[int, set[WebSocket]]] = {}
 PODCAST_PROXY_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -507,6 +514,12 @@ def search_podcasts(
     q: str = Query(min_length=2, max_length=120),
     limit: int = Query(default=10, ge=1, le=20),
 ) -> list[PodcastSearchItem]:
+    cache_key = f"{q.strip().lower()}::{limit}"
+    now = time.time()
+    cached = PODCAST_SEARCH_CACHE.get(cache_key)
+    if cached and cached[0] > now:
+        return cached[1]
+
     endpoint = (
         "https://itunes.apple.com/search"
         f"?term={q}&entity=podcast&limit={limit}&country=US"
@@ -524,29 +537,24 @@ def search_podcasts(
         feed_url = row.get("feedUrl")
         if not feed_url:
             continue
-        audio_url, episode_duration = parse_episode_audio(feed_url)
-        if not audio_url:
-            continue
-
-        stream_token = encode_stream_token(audio_url)
-        PODCAST_STREAM_CACHE[stream_token] = audio_url
         episode_count = row.get("trackCount")
-        duration_label = episode_duration or (f"Эпизодов: {episode_count}" if episode_count else "Подкаст")
+        duration_label = f"Эпизодов: {episode_count}" if episode_count else "Подкаст"
 
         items.append(
             PodcastSearchItem(
-                podcast_id=str(row.get("trackId") or stream_token),
+                podcast_id=str(row.get("trackId") or uuid.uuid4().hex),
                 title=row.get("trackName") or row.get("collectionName") or "Podcast",
                 artist=row.get("artistName") or "Podcast",
                 duration=duration_label,
                 cover_url=row.get("artworkUrl600") or row.get("artworkUrl100"),
                 source_url=row.get("trackViewUrl") or row.get("collectionViewUrl"),
-                stream_url=f"/podcasts/stream/{stream_token}",
+                stream_url=None,
             )
         )
         if len(items) >= limit:
             break
 
+    PODCAST_SEARCH_CACHE[cache_key] = (now + PODCAST_SEARCH_TTL_SECONDS, items)
     return items
 
 
@@ -555,25 +563,38 @@ def podcast_episodes(
     podcast_id: str,
     limit: int = Query(default=20, ge=1, le=50),
 ) -> list[PodcastEpisodeItem]:
-    lookup_url = f"https://itunes.apple.com/lookup?id={podcast_id}"
-    try:
-        resp = requests.get(lookup_url, timeout=12)
-        resp.raise_for_status()
-        payload = resp.json()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Podcast lookup failed: {exc}")
+    now = time.time()
+    episodes_cache_key = f"{podcast_id}::{limit}"
+    cached_eps = PODCAST_EPISODES_CACHE.get(episodes_cache_key)
+    if cached_eps and cached_eps[0] > now:
+        return cached_eps[1]
 
-    results = payload.get("results") or []
-    if not results:
-        raise HTTPException(status_code=404, detail="Podcast not found")
+    cached_lookup = PODCAST_LOOKUP_CACHE.get(podcast_id)
+    feed_url: str | None = None
+    if cached_lookup and cached_lookup[0] > now:
+        feed_url = cached_lookup[1]
+    else:
+        lookup_url = f"https://itunes.apple.com/lookup?id={podcast_id}"
+        try:
+            resp = requests.get(lookup_url, timeout=12)
+            resp.raise_for_status()
+            payload = resp.json()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Podcast lookup failed: {exc}")
 
-    feed_url = results[0].get("feedUrl")
-    if not feed_url:
-        raise HTTPException(status_code=404, detail="Podcast feed not found")
+        results = payload.get("results") or []
+        if not results:
+            raise HTTPException(status_code=404, detail="Podcast not found")
+
+        feed_url = results[0].get("feedUrl")
+        if not feed_url:
+            raise HTTPException(status_code=404, detail="Podcast feed not found")
+        PODCAST_LOOKUP_CACHE[podcast_id] = (now + PODCAST_LOOKUP_TTL_SECONDS, feed_url)
 
     episodes = parse_feed_episodes(feed_url, limit)
     if not episodes:
         raise HTTPException(status_code=404, detail="No episodes found")
+    PODCAST_EPISODES_CACHE[episodes_cache_key] = (now + PODCAST_EPISODES_TTL_SECONDS, episodes)
     return episodes
 
 
