@@ -311,7 +311,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 .auth-divider {
   position: relative;
   text-align: center;
-  margin: 0 0 14px;
+  margin: 0 0 6px;
 }
 
 .auth-divider::before {
