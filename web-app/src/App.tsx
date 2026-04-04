@@ -2490,7 +2490,24 @@ function DiscoverScreen({
   onShare: (s: Song) => void;
 }) {
   type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string; podcastId?: string };
+  const TRACK_TAG_QUERY_MAP: Record<string, string> = {
+    'Поп': 'pop hits',
+    'Рок': 'rock hits',
+    'Хип-хоп': 'hip hop',
+    'R&B': 'r&b',
+    'Электроника': 'electronic',
+    'Инди': 'indie',
+  };
+  const PODCAST_TAG_QUERY_MAP: Record<string, string> = {
+    'Технологии': 'technology podcast',
+    'Стартапы': 'startup podcast',
+    'Интервью': 'interview podcast',
+    'Карьера': 'career podcast',
+    'Психология': 'psychology podcast',
+    'Бизнес': 'business podcast',
+  };
   const [mode, setMode] = useState<'tracks' | 'podcasts'>('tracks');
+  const [activeTag, setActiveTag] = useState('');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [remoteSongs, setRemoteSongs] = useState<DiscoverItem[]>([]);
@@ -2505,10 +2522,12 @@ function DiscoverScreen({
     setRemoteSongs([]);
     setHasRemoteLoaded(false);
     setShowAll(false);
+    setActiveTag('');
   }, [mode]);
 
   useEffect(() => {
     setShowAll(false);
+    setActiveTag('');
   }, [query]);
 
   const openPodcastEpisodes = async (podcast: DiscoverItem) => {
@@ -2553,7 +2572,10 @@ function DiscoverScreen({
       return;
     }
     const trimmed = query.trim();
-    const effectiveQuery = trimmed.length >= 2 ? trimmed : mode === 'podcasts' ? 'top podcasts' : 'top hits';
+    const effectiveTagQuery = activeTag
+      ? (mode === 'podcasts' ? PODCAST_TAG_QUERY_MAP[activeTag] : TRACK_TAG_QUERY_MAP[activeTag]) || activeTag
+      : '';
+    const effectiveQuery = effectiveTagQuery || (trimmed.length >= 2 ? trimmed : mode === 'podcasts' ? 'top podcasts' : 'top hits');
 
     let cancelled = false;
     const timer = setTimeout(async () => {
@@ -2616,7 +2638,7 @@ function DiscoverScreen({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, token, isDemoMode, mode]);
+  }, [query, token, isDemoMode, mode, activeTag]);
 
   const fallbackList: DiscoverItem[] =
     mode === 'podcasts'
@@ -2637,7 +2659,10 @@ function DiscoverScreen({
         <input
           placeholder={mode === 'podcasts' ? 'Поиск подкастов...' : 'Поиск треков и артистов...'}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setActiveTag('');
+            setQuery(e.target.value);
+          }}
         />
       </div>
       {loading && <div className="search-status">{mode === 'podcasts' ? 'Ищем подкасты...' : 'Ищем треки в YouTube Music...'}</div>}
@@ -2648,7 +2673,15 @@ function DiscoverScreen({
         <div className="search-status">Ничего не найдено</div>
       )}
       <div className="tag-row">
-        {tags.map(tag => (<button className="tag-chip" key={tag}>{tag}</button>))}
+        {tags.map((tag) => (
+          <button
+            className={`tag-chip ${activeTag === tag ? 'active' : ''}`}
+            key={tag}
+            onClick={() => setActiveTag((prev) => (prev === tag ? '' : tag))}
+          >
+            {tag}
+          </button>
+        ))}
       </div>
       <div className="section-header">
         <h3 className="section-title">{mode === 'podcasts' ? 'Популярные подкасты' : 'В тренде'}</h3>
