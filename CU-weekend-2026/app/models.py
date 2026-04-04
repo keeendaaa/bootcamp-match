@@ -19,6 +19,7 @@ class User(Base):
     now_playing_song_id: Mapped[int | None] = mapped_column(
         ForeignKey("songs.id"), nullable=True
     )
+    now_playing_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     songs = relationship(
         "Song",

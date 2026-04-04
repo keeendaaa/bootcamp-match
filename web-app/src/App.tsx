@@ -540,6 +540,16 @@ export default function App() {
     }
   };
 
+  const touchNowPlayingOnBackend = async () => {
+    const accessToken = tokenRef.current;
+    if (!accessToken) return;
+    try {
+      await apiRequest<{ ok: boolean }>('/me/now-playing/heartbeat', { method: 'POST' }, accessToken);
+    } catch {
+      // no-op: heartbeat failures are non-critical
+    }
+  };
+
   useEffect(() => {
     currentSongRef.current = currentSong;
   }, [currentSong]);
@@ -563,6 +573,14 @@ export default function App() {
   useEffect(() => {
     tokenRef.current = token;
   }, [token]);
+
+  useEffect(() => {
+    if (!token || !isPlaying || !currentBackendSongId) return;
+    const timer = setInterval(() => {
+      void touchNowPlayingOnBackend();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [token, isPlaying, currentBackendSongId]);
 
   const clearSession = () => {
     if (clearNowPlayingTimerRef.current) {

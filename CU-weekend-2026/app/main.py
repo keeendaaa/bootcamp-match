@@ -2,7 +2,7 @@ import os
 import re
 import shutil
 import uuid
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -43,6 +43,7 @@ from .schemas import (
 app = FastAPI(title="CU Weekend MVP API")
 ytmusic = YTMusic()
 STREAM_CACHE: dict[str, tuple[str, dict[str, str]]] = {}
+NOW_PLAYING_TTL_SECONDS = 40
 
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -660,6 +661,7 @@ def update_now_playing(
         raise HTTPException(status_code=404, detail="Song not found")
 
     current_user.now_playing_song_id = song.id
+    current_user.now_playing_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     db.refresh(song)
 
@@ -672,6 +674,19 @@ def clear_now_playing(
     db: Session = Depends(get_db),
 ) -> dict:
     current_user.now_playing_song_id = None
+    current_user.now_playing_updated_at = None
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/me/now-playing/heartbeat")
+def touch_now_playing(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not current_user.now_playing_song_id:
+        return {"ok": False}
+    current_user.now_playing_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     return {"ok": True}
 
@@ -696,6 +711,17 @@ def get_friend_now_playing(
         raise HTTPException(status_code=404, detail="Friend not found")
 
     if not friend.now_playing_song_id:
+        return NowPlayingResponse(song=None)
+
+    last_touch = friend.now_playing_updated_at
+    is_stale = (
+        last_touch is None
+        or (datetime.now(timezone.utc).replace(tzinfo=None) - last_touch) > timedelta(seconds=NOW_PLAYING_TTL_SECONDS)
+    )
+    if is_stale:
+        friend.now_playing_song_id = None
+        friend.now_playing_updated_at = None
+        db.commit()
         return NowPlayingResponse(song=None)
 
     song = db.query(Song).filter(Song.id == friend.now_playing_song_id).first()
