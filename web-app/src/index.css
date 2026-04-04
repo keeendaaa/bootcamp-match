@@ -276,7 +276,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 .auth-socials {
   display: flex;
   gap: 12px;
-  margin-top: 8px;
+  margin-top: 2px;
   justify-content: center;
 }
 
