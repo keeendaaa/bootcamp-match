@@ -295,6 +295,18 @@ const mapApiUserToFriend = (user: ApiUser, idx: number): Friend => ({
   lastActive: LAST_ACTIVE_POOL[idx % LAST_ACTIVE_POOL.length],
 });
 
+const isDebugEnabled = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const localFlag = localStorage.getItem('match_debug') === '1';
+  const globalFlag = Boolean((window as typeof window & { __MATCH_DEBUG__?: boolean }).__MATCH_DEBUG__);
+  return localFlag || globalFlag;
+};
+
+const debugLog = (...args: unknown[]) => {
+  if (!isDebugEnabled()) return;
+  console.log('[match-debug]', ...args);
+};
+
 async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type') && options.body && !(options.body instanceof FormData)) {
@@ -461,6 +473,14 @@ export default function App() {
     if (!audio) return;
 
     const streamUrl = resolveStreamUrl(song);
+    debugLog('startPlayback called', {
+      songId: song.id,
+      title: song.title,
+      artist: song.artist,
+      rawStreamUrl: song.streamUrl,
+      resolvedStreamUrl: streamUrl,
+      isDemoMode,
+    });
     if (!streamUrl) {
       setPlayerError('Для этого трека нет доступного аудио-потока');
       setIsPlaying(false);
@@ -468,6 +488,23 @@ export default function App() {
     }
 
     setPlayerError('');
+    try {
+      const probe = await fetch(streamUrl, {
+        method: 'GET',
+        headers: { Range: 'bytes=0-1' },
+      });
+      debugLog('stream probe', {
+        url: streamUrl,
+        status: probe.status,
+        ok: probe.ok,
+        contentType: probe.headers.get('content-type'),
+      });
+      if (!probe.ok) {
+        setPlayerError(`Поток недоступен (${probe.status})`);
+      }
+    } catch (err) {
+      debugLog('stream probe failed', err);
+    }
     if (clearNowPlayingTimerRef.current) {
       clearTimeout(clearNowPlayingTimerRef.current);
       clearNowPlayingTimerRef.current = null;
@@ -480,8 +517,11 @@ export default function App() {
     try {
       await audio.play();
       setIsPlaying(true);
-    } catch {
-      setPlayerError('Не удалось начать воспроизведение');
+      debugLog('audio.play success', { currentTime: audio.currentTime, src: audio.src });
+    } catch (err) {
+      const details = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      debugLog('audio.play failed', details);
+      setPlayerError(`Не удалось начать воспроизведение (${details})`);
       setIsPlaying(false);
     }
   };
@@ -682,6 +722,7 @@ export default function App() {
     };
     const syncTime = () => setCurrentTimeSec(audio.currentTime || 0);
     const onPlay = () => {
+      debugLog('audio event: play', { src: audio.src });
       if (clearNowPlayingTimerRef.current) {
         clearTimeout(clearNowPlayingTimerRef.current);
         clearNowPlayingTimerRef.current = null;
@@ -689,6 +730,7 @@ export default function App() {
       setIsPlaying(true);
     };
     const onPause = () => {
+      debugLog('audio event: pause', { currentTime: audio.currentTime });
       setIsPlaying(false);
       if (clearNowPlayingTimerRef.current) clearTimeout(clearNowPlayingTimerRef.current);
       clearNowPlayingTimerRef.current = setTimeout(() => {
@@ -696,6 +738,7 @@ export default function App() {
       }, 1200);
     };
     const onEnded = async () => {
+      debugLog('audio event: ended', { currentTime: audio.currentTime, duration: audio.duration });
       syncTime();
       if (clearNowPlayingTimerRef.current) {
         clearTimeout(clearNowPlayingTimerRef.current);
@@ -718,9 +761,38 @@ export default function App() {
       void clearNowPlayingOnBackend();
       setIsPlaying(false);
     };
+    const onError = () => {
+      const mediaError = audio.error;
+      const code = mediaError?.code || 0;
+      const map: Record<number, string> = {
+        1: 'MEDIA_ERR_ABORTED',
+        2: 'MEDIA_ERR_NETWORK',
+        3: 'MEDIA_ERR_DECODE',
+        4: 'MEDIA_ERR_SRC_NOT_SUPPORTED',
+      };
+      const label = map[code] || 'UNKNOWN_MEDIA_ERROR';
+      debugLog('audio event: error', {
+        code,
+        label,
+        message: mediaError?.message || '',
+        networkState: audio.networkState,
+        readyState: audio.readyState,
+        src: audio.src,
+      });
+      setPlayerError(`Ошибка аудио: ${label}`);
+    };
+    const onStalled = () => debugLog('audio event: stalled', { currentTime: audio.currentTime, src: audio.src });
+    const onWaiting = () => debugLog('audio event: waiting', { currentTime: audio.currentTime });
+    const onCanPlay = () => debugLog('audio event: canplay', { duration: audio.duration, src: audio.src });
+    const onPlaying = () => debugLog('audio event: playing', { currentTime: audio.currentTime });
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
     audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
+    audio.addEventListener('stalled', onStalled);
+    audio.addEventListener('waiting', onWaiting);
+    audio.addEventListener('canplay', onCanPlay);
+    audio.addEventListener('playing', onPlaying);
     audio.addEventListener('timeupdate', syncTime);
     audio.addEventListener('loadedmetadata', syncDuration);
     audio.addEventListener('durationchange', syncDuration);
@@ -732,6 +804,11 @@ export default function App() {
       audio.removeEventListener('play', onPlay);
       audio.removeEventListener('pause', onPause);
       audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('error', onError);
+      audio.removeEventListener('stalled', onStalled);
+      audio.removeEventListener('waiting', onWaiting);
+      audio.removeEventListener('canplay', onCanPlay);
+      audio.removeEventListener('playing', onPlaying);
       audio.removeEventListener('timeupdate', syncTime);
       audio.removeEventListener('loadedmetadata', syncDuration);
       audio.removeEventListener('durationchange', syncDuration);
@@ -739,6 +816,32 @@ export default function App() {
       audioRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const w = window as typeof window & {
+      matchDebug?: {
+        enable: () => void;
+        disable: () => void;
+        status: () => { enabled: boolean; token: string; song: string };
+      };
+      __MATCH_DEBUG__?: boolean;
+    };
+    w.matchDebug = {
+      enable: () => {
+        localStorage.setItem('match_debug', '1');
+        w.__MATCH_DEBUG__ = true;
+        console.log('[match-debug] enabled');
+      },
+      disable: () => {
+        localStorage.removeItem('match_debug');
+        w.__MATCH_DEBUG__ = false;
+        console.log('[match-debug] disabled');
+      },
+      status: () => ({ enabled: isDebugEnabled(), token, song: currentSongRef.current.title }),
+    };
+    debugLog('matchDebug helper available: window.matchDebug.enable()/disable()/status()');
+  }, [token]);
 
   useEffect(() => {
     let handle: { remove: () => Promise<void> } | null = null;
