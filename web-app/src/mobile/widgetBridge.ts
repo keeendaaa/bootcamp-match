@@ -103,16 +103,16 @@ export const buildFriendsWidgetSnapshot = (
           title: featuredTrack.title,
           artist: featuredTrack.artist,
           cover: featuredTrack.cover,
-          cta: `${featuredFriend.name} слушает это прямо сейчас`,
+          cta: 'Слушать вместе',
           deeplink: buildWidgetDeepLink({
             friendId: featuredFriend.id,
             trackId: featuredTrack.id,
-            autoplay: false,
+            autoplay: true,
           }),
           webUrl: buildWidgetWebUrl({
             friendId: featuredFriend.id,
             trackId: featuredTrack.id,
-            autoplay: false,
+            autoplay: true,
           }),
         }
       : undefined,

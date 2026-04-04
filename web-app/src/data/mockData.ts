@@ -5,6 +5,8 @@ export interface Song {
   cover: string;
   duration: string;
   streamUrl?: string;
+  backendSongId?: number;
+  ownerUserId?: number;
 }
 
 export interface Friend {

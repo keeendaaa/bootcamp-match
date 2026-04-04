@@ -90,6 +90,7 @@ type ApiDirectThread = {
 type AuthMode = 'login' | 'register';
 type SocialProvider = 'google' | 'yandex';
 type RepeatMode = 'off' | 'all' | 'one';
+type NowPlayingSource = 'app' | 'device' | 'session';
 type ApiMusicSearchItem = {
   video_id: string;
   title: string;
@@ -312,13 +313,15 @@ const normalizeAvatarUrl = (raw?: string | null): string | undefined => {
   return normalizeBackendFileUrl(raw);
 };
 
-const mapBackendSongToUiSong = (song: ApiSong, idx: number): Song => {
+const mapBackendSongToUiSong = (song: ApiSong, idx: number, ownerUserId?: number): Song => {
   const base = SONGS[idx % SONGS.length];
   const rawUrl = song.stream_url || song.url || '';
   const streamUrl = normalizePlayableUrl(rawUrl);
   return {
     ...base,
     id: 4_000_000 + song.id,
+    backendSongId: song.id,
+    ownerUserId,
     title: trimSongTitle(song.title || titleFromUrl(song.url, `Трек #${song.id}`)),
     artist: song.artist || 'Друг',
     cover: song.cover_url || base.cover,
@@ -353,13 +356,15 @@ const mapLikedTrackToSong = (track: ApiLikedTrack, idx: number): Song => {
   };
 };
 
-const mapSessionSongToUiSong = (song: ApiSong): Song => {
+const mapSessionSongToUiSong = (song: ApiSong, ownerUserId?: number): Song => {
   const base = SONGS[0];
   const rawUrl = song.stream_url || song.url || '';
   const streamUrl = normalizePlayableUrl(rawUrl);
   return {
     ...base,
     id: 5_000_000 + song.id,
+    backendSongId: song.id,
+    ownerUserId,
     title: trimSongTitle(song.title || titleFromUrl(song.url, `Трек #${song.id}`)),
     artist: song.artist || 'Друг',
     cover: song.cover_url || base.cover,
@@ -378,8 +383,8 @@ const mapUploadedSongToUiSong = (song: ApiSong, fallbackName?: string): Song => 
   };
 };
 
-const mapFriendSongToUiSong = (song: ApiSong, idx: number, friendName: string): Song => {
-  const mapped = mapBackendSongToUiSong(song, idx);
+const mapFriendSongToUiSong = (song: ApiSong, idx: number, friendName: string, ownerUserId?: number): Song => {
+  const mapped = mapBackendSongToUiSong(song, idx, ownerUserId);
   return {
     ...mapped,
     artist: song.artist || friendName,
@@ -590,6 +595,7 @@ export default function App() {
   const [activeSession, setActiveSession] = useState<ApiSession | null>(null);
   const [sessionMessages, setSessionMessages] = useState<ApiSessionMessage[]>([]);
   const [currentBackendSongId, setCurrentBackendSongId] = useState<number | null>(null);
+  const [backendNowPlayingSource, setBackendNowPlayingSource] = useState<NowPlayingSource | null>(null);
   const [activeQueue, setActiveQueue] = useState<Song[] | null>(null);
   const [queueIndex, setQueueIndex] = useState<number | null>(null);
   const [shuffleOn, setShuffleOn] = useState(false);
@@ -614,6 +620,9 @@ export default function App() {
   const lastAppliedSessionSongIdRef = useRef<number | null>(null);
   const lastAutoOpenedSessionIdRef = useRef<number | null>(null);
   const lastResolvedDeviceTrackKeyRef = useRef('');
+  const backendNowPlayingSourceRef = useRef<NowPlayingSource | null>(null);
+  const lastDevicePublishedTrackKeyRef = useRef('');
+  const deviceNowPlayingSyncInFlightRef = useRef(false);
   const isDemoMode = token === DEMO_TOKEN;
 
   const currentSong = customSong || SONGS[songIndex];
@@ -981,12 +990,17 @@ export default function App() {
   }, [token]);
 
   useEffect(() => {
-    if (!token || !isPlaying || !currentBackendSongId) return;
+    backendNowPlayingSourceRef.current = backendNowPlayingSource;
+  }, [backendNowPlayingSource]);
+
+  useEffect(() => {
+    if (!token || !currentBackendSongId) return;
+    if (!isPlaying && backendNowPlayingSource !== 'device') return;
     const timer = setInterval(() => {
       void touchNowPlayingOnBackend();
     }, NOW_PLAYING_HEARTBEAT_MS);
     return () => clearInterval(timer);
-  }, [token, isPlaying, currentBackendSongId]);
+  }, [token, isPlaying, currentBackendSongId, backendNowPlayingSource]);
 
   const clearSession = () => {
     if (clearNowPlayingTimerRef.current) {
@@ -994,6 +1008,9 @@ export default function App() {
       clearNowPlayingTimerRef.current = null;
     }
     void clearNowPlayingOnBackend();
+    setCurrentBackendSongId(null);
+    setBackendNowPlayingSource(null);
+    lastDevicePublishedTrackKeyRef.current = '';
     localStorage.removeItem(AUTH_STORAGE_KEY);
     setToken('');
     setCurrentUser(null);
@@ -1055,9 +1072,11 @@ export default function App() {
       debugLog('audio event: pause', { currentTime: audio.currentTime });
       setIsPlaying(false);
       if (clearNowPlayingTimerRef.current) clearTimeout(clearNowPlayingTimerRef.current);
-      clearNowPlayingTimerRef.current = setTimeout(() => {
-        void clearNowPlayingOnBackend();
-      }, 1200);
+      if (backendNowPlayingSourceRef.current !== 'device') {
+        clearNowPlayingTimerRef.current = setTimeout(() => {
+          void clearNowPlayingOnBackend();
+        }, 1200);
+      }
     };
     const onEnded = async () => {
       debugLog('audio event: ended', { currentTime: audio.currentTime, duration: audio.duration });
@@ -1080,7 +1099,9 @@ export default function App() {
         nextTrackRef.current?.();
         return;
       }
-      void clearNowPlayingOnBackend();
+      if (backendNowPlayingSourceRef.current !== 'device') {
+        void clearNowPlayingOnBackend();
+      }
       setIsPlaying(false);
     };
     const onError = () => {
@@ -1220,7 +1241,7 @@ export default function App() {
 
           const fallback = FRIENDS[idx % FRIENDS.length] || FRIENDS[0];
           const previous = friendsRef.current.find((friend) => friend.id === bf.id);
-          const currentSong = nowPlaying?.song ? mapBackendSongToUiSong(nowPlaying.song, idx) : undefined;
+          const currentSong = nowPlaying?.song ? mapBackendSongToUiSong(nowPlaying.song, idx, bf.id) : undefined;
 
           return {
             id: bf.id,
@@ -1333,7 +1354,7 @@ export default function App() {
     setProfileStats(stats);
     setLikedTrackKeys(new Set(likes.map((item) => item.track_key)));
     setLikedSongs(likes.map((item, idx) => mapLikedTrackToSong(item, idx)));
-    setRecentSongs(mergeUniqueSongs(recent.map((item) => mapSessionSongToUiSong(item))));
+    setRecentSongs(mergeUniqueSongs(recent.map((item) => mapSessionSongToUiSong(item, currentUser?.id))));
   };
 
   const refreshProfileStats = async (accessToken: string) => {
@@ -1356,7 +1377,7 @@ export default function App() {
 
     try {
       const remoteSongs = await apiRequest<ApiSong[]>(`/friends/${friend.id}/songs`, {}, token);
-      const mappedSongs = remoteSongs.map((item, idx) => mapFriendSongToUiSong(item, idx, friend.name));
+      const mappedSongs = remoteSongs.map((item, idx) => mapFriendSongToUiSong(item, idx, friend.name, friend.id));
       setFriendProfileSongs(mergeUniqueSongs([...(friend.currentSong ? [friend.currentSong] : []), ...mappedSongs]));
     } catch (err) {
       setFriendProfileError(formatUserFacingError(err, 'Не удалось загрузить треки друга'));
@@ -1369,6 +1390,32 @@ export default function App() {
     const trackKey = trackKeyOfSong(song);
     if (likedTrackKeys.has(trackKey)) return true;
     return toggleLike(song);
+  };
+
+  const playSongWithOptionalSession = (song: Song, friend?: Friend, queue?: Song[], selectedIndex?: number) => {
+    if (queue && queue.length > 0) {
+      const resolvedIdx = typeof selectedIndex === 'number'
+        ? selectedIndex
+        : Math.max(0, queue.findIndex((s) => s.id === song.id));
+      setActiveQueue(queue);
+      setQueueIndex(Math.max(0, resolvedIdx));
+    } else {
+      setActiveQueue(null);
+      setQueueIndex(null);
+    }
+    selectSongInPlayer(song);
+    setIsPlaying(true);
+    setListeningWith(friend ?? null);
+    if (friend) setNpOpen(true);
+    void startPlayback(song);
+    void (async () => {
+      const created = await syncNowPlayingToBackend(song);
+      if (created?.id) setCurrentBackendSongId(created.id);
+      if (friend) {
+        const currentPos = audioRef.current?.currentTime || 0;
+        await inviteToListen(friend.id, created?.id ?? null, currentPos, true, true);
+      }
+    })();
   };
 
   useEffect(() => {
@@ -1389,25 +1436,20 @@ export default function App() {
     setTab('friends');
     setOpenChat(null);
     setShareModal(null);
-    setNpOpen(Boolean(targetSong));
-    setListeningWith(targetSong ? friend : null);
-    setActiveQueue(null);
-    setQueueIndex(null);
     setPlayerError('');
 
     if (targetSong) {
-      selectSongInPlayer(targetSong);
-      if (pendingWidgetRequest.autoplay) {
-        void startPlayback(targetSong);
-      } else {
-        audioRef.current?.pause();
-        setIsPlaying(false);
-      }
+      playSongWithOptionalSession(targetSong, friend);
+    } else {
+      setNpOpen(false);
+      setListeningWith(null);
+      setActiveQueue(null);
+      setQueueIndex(null);
     }
 
     setPendingWidgetRequest(null);
     clearHandledWidgetParams();
-  }, [pendingWidgetRequest, token, currentUser, friends, findFriendById, selectSongInPlayer, startPlayback]);
+  }, [pendingWidgetRequest, token, currentUser, friends, findFriendById, playSongWithOptionalSession]);
 
   const toggleLike = async (song: Song): Promise<boolean> => {
     if (!token) return false;
@@ -1617,6 +1659,53 @@ export default function App() {
   }, [deviceNowPlayingTrack, likedSongs, recentSongs, deviceNowPlayingMatch]);
 
   useEffect(() => {
+    if (!token || !currentUser || isDemoMode) return;
+    if (activeSession) return;
+    if (isPlaying && backendNowPlayingSource === 'app') return;
+
+    if (!deviceNowPlayingAccessGranted || !deviceNowPlayingTrack || !deviceNowPlayingMatch) {
+      if (backendNowPlayingSource === 'device') {
+        setCurrentBackendSongId(null);
+        setBackendNowPlayingSource(null);
+        lastDevicePublishedTrackKeyRef.current = '';
+        void clearNowPlayingOnBackend();
+      }
+      return;
+    }
+
+    if (deviceNowPlayingResolving || deviceNowPlayingSyncInFlightRef.current) return;
+
+    const matchedTrackKey = trackKeyOfSong(deviceNowPlayingMatch);
+    if (
+      backendNowPlayingSource === 'device' &&
+      currentBackendSongId &&
+      lastDevicePublishedTrackKeyRef.current === matchedTrackKey
+    ) {
+      return;
+    }
+
+    deviceNowPlayingSyncInFlightRef.current = true;
+    void syncNowPlayingToBackend(deviceNowPlayingMatch, {
+      skipStats: true,
+      source: 'device',
+    }).finally(() => {
+      deviceNowPlayingSyncInFlightRef.current = false;
+    });
+  }, [
+    token,
+    currentUser,
+    isDemoMode,
+    activeSession,
+    isPlaying,
+    backendNowPlayingSource,
+    currentBackendSongId,
+    deviceNowPlayingAccessGranted,
+    deviceNowPlayingTrack,
+    deviceNowPlayingMatch,
+    deviceNowPlayingResolving,
+  ]);
+
+  useEffect(() => {
     if (!token || !currentUser) return;
     if (isDemoMode) {
       setFriends(FRIENDS);
@@ -1758,10 +1847,14 @@ export default function App() {
           lastMessageIdRef.current = 0;
           lastAppliedSessionSongIdRef.current = null;
           lastAutoOpenedSessionIdRef.current = null;
-          setCurrentBackendSongId(null);
+          if (backendNowPlayingSourceRef.current === 'session') {
+            setCurrentBackendSongId(null);
+            setBackendNowPlayingSource(null);
+          }
         }
         if (session && session.song) {
           setCurrentBackendSongId(session.song.id);
+          setBackendNowPlayingSource('session');
           const mateId = session.host_id === currentUser.id ? session.guest_id : session.host_id;
           const mate = findFriendById(mateId);
           if (mate) setListeningWith(mate);
@@ -1922,28 +2015,56 @@ export default function App() {
     return apiRequest<ApiUser[]>(`/users/search?q=${encodeURIComponent(query)}`, {}, token);
   };
 
-  const syncNowPlayingToBackend = async (song: Song): Promise<ApiSong | null> => {
+  const syncNowPlayingToBackend = async (
+    song: Song,
+    options?: { skipStats?: boolean; source?: NowPlayingSource }
+  ): Promise<ApiSong | null> => {
     if (isDemoMode) return null;
     if (!token) return null;
+    if (!currentUser) return null;
     try {
-      const songUrl = resolveStreamUrl(song) || `${window.location.origin}/tracks/${song.id}-${song.title.toLowerCase().replace(/\s+/g, '-')}`;
-      const created = await apiRequest<ApiSong>('/songs', {
-        method: 'POST',
-        body: JSON.stringify({
+      const source = options?.source ?? 'app';
+      const streamUrl = resolveStreamUrl(song) || null;
+      const songUrl = streamUrl || `${window.location.origin}/tracks/${song.id}-${song.title.toLowerCase().replace(/\s+/g, '-')}`;
+      let created: ApiSong;
+
+      if (song.backendSongId && song.ownerUserId === currentUser.id) {
+        created = {
+          id: song.backendSongId,
           url: songUrl,
           title: song.title,
           artist: song.artist,
           cover_url: song.cover,
-          stream_url: resolveStreamUrl(song) || null,
+          stream_url: streamUrl,
           duration: song.duration,
-        }),
-      }, token);
+        };
+      } else {
+        created = await apiRequest<ApiSong>('/songs', {
+          method: 'POST',
+          body: JSON.stringify({
+            url: songUrl,
+            title: song.title,
+            artist: song.artist,
+            cover_url: song.cover,
+            stream_url: streamUrl,
+            duration: song.duration,
+          }),
+        }, token);
+      }
+
       await apiRequest<ApiSong>('/me/now-playing', {
         method: 'PUT',
         body: JSON.stringify({ song_id: created.id }),
       }, token);
-      await refreshProfileStats(token);
+      if (!options?.skipStats) {
+        await refreshProfileStats(token);
+      }
       setCurrentBackendSongId(created.id);
+      setBackendNowPlayingSource(source);
+      setRecentSongs((prev) => mergeUniqueSongs([mapSessionSongToUiSong(created, currentUser.id), ...prev]));
+      if (source === 'device') {
+        lastDevicePublishedTrackKeyRef.current = trackKeyOfSong(song);
+      }
       return created;
     } catch (err) {
       console.warn('Failed to sync now playing to backend.', err);
@@ -1973,6 +2094,7 @@ export default function App() {
       }, token);
       setActiveSession(session);
       setCurrentBackendSongId(session.song?.id ?? songId ?? null);
+      setBackendNowPlayingSource('session');
       setSessionMessages([]);
       lastMessageIdRef.current = 0;
     } catch (err) {
@@ -1986,6 +2108,7 @@ export default function App() {
     const accepted = await apiRequest<ApiSession>(`/listen/${sessionId}/accept`, { method: 'POST' }, token);
     setActiveSession(accepted);
     setCurrentBackendSongId(accepted.song?.id ?? null);
+    setBackendNowPlayingSource('session');
     setSessionMessages([]);
     lastMessageIdRef.current = 0;
     lastAutoOpenedSessionIdRef.current = accepted.id;
@@ -2043,6 +2166,7 @@ export default function App() {
       lastMessageIdRef.current = 0;
       lastAutoOpenedSessionIdRef.current = null;
       setCurrentBackendSongId(null);
+      setBackendNowPlayingSource(null);
       setActiveQueue(null);
       setQueueIndex(null);
     }
@@ -2086,29 +2210,7 @@ export default function App() {
   };
 
   const playSong = (song: Song, friend?: Friend, queue?: Song[], selectedIndex?: number) => {
-    if (queue && queue.length > 0) {
-      const resolvedIdx = typeof selectedIndex === 'number'
-        ? selectedIndex
-        : Math.max(0, queue.findIndex((s) => s.id === song.id));
-      setActiveQueue(queue);
-      setQueueIndex(Math.max(0, resolvedIdx));
-    } else {
-      setActiveQueue(null);
-      setQueueIndex(null);
-    }
-    selectSongInPlayer(song);
-    setIsPlaying(true);
-    setListeningWith(friend ?? null);
-    if (friend) setNpOpen(true);
-    void startPlayback(song);
-    void (async () => {
-      const created = await syncNowPlayingToBackend(song);
-      if (created?.id) setCurrentBackendSongId(created.id);
-      if (friend) {
-        const currentPos = audioRef.current?.currentTime || 0;
-        await inviteToListen(friend.id, created?.id ?? null, currentPos, true, true);
-      }
-    })();
+    playSongWithOptionalSession(song, friend, queue, selectedIndex);
   };
 
   if (!authReady) {
