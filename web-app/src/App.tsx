@@ -2341,10 +2341,10 @@ function FriendsScreen({
         >
           <div className="widget-user friend-profile-trigger" onClick={() => onOpenProfile(friend)}>
             <div className="widget-avatar-wrap">
-              <img src={friend.avatar} alt="" className="widget-avatar" />
+              <img src={friend.avatar} alt="" className="widget-avatar" onClick={() => onOpenProfile(friend)} />
               {friend.isOnline && <div className={`online-dot ${friend.isListening ? 'listening' : ''}`} />}
             </div>
-            <div className="widget-user-info">
+            <div className="widget-user-info" onClick={() => onOpenProfile(friend)}>
               <h3>{friend.name}</h3>
               <p>{friend.isListening ? 'Слушает сейчас' : friend.lastActive}</p>
             </div>
