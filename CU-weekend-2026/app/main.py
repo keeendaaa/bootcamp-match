@@ -1160,7 +1160,7 @@ def list_direct_threads(
     if not friend_rows:
         return []
 
-    threads: list[DirectThreadPublic] = []
+    threads: list[tuple[datetime | None, DirectThreadPublic]] = []
     for friend in friend_rows:
         last_message = (
             db.query(DirectMessage)
@@ -1187,13 +1187,17 @@ def list_direct_threads(
             .count()
         )
         threads.append(
-            DirectThreadPublic(
-                friend=user_to_public(friend),
-                last_message=direct_message_to_public(last_message) if last_message else None,
-                unread=unread,
+            (
+                last_message.created_at if last_message else None,
+                DirectThreadPublic(
+                    friend=user_to_public(friend),
+                    last_message=direct_message_to_public(last_message) if last_message else None,
+                    unread=unread,
+                ),
             )
         )
-    return threads
+    threads.sort(key=lambda item: item[0] or datetime.max)
+    return [item[1] for item in threads]
 
 
 @app.get("/chats/{friend_id}/messages", response_model=list[DirectMessagePublic])
