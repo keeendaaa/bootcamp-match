@@ -41,6 +41,13 @@ export const SONGS: Song[] = [
   { id: 6, title: 'good 4 u', artist: 'Olivia Rodrigo', cover: '/covers/cover6.jpg', duration: '2:58', streamUrl: '/music/stream/gNi_6U5Pm_o' },
 ];
 
+export const PODCASTS: Song[] = [
+  { id: 101, title: 'Подкаст: Как строить продукт в 2026', artist: 'MVP Talks', cover: '/covers/cover1.jpg', duration: 'Эпизодов: 48' },
+  { id: 102, title: 'Подкаст: Музыка и алгоритмы рекомендаций', artist: 'Audio Future', cover: '/covers/cover2.jpg', duration: 'Эпизодов: 64' },
+  { id: 103, title: 'Подкаст: Рост соцприложений без бюджета', artist: 'Startup Wave', cover: '/covers/cover3.jpg', duration: 'Эпизодов: 29' },
+  { id: 104, title: 'Подкаст: UX для мобильных привычек', artist: 'Design Jam', cover: '/covers/cover4.jpg', duration: 'Эпизодов: 37' },
+];
+
 export const FRIENDS: Friend[] = [
   { id: 1, name: 'Даня', username: '@danya', avatar: '/avatars/danya.jpg', isOnline: true, isListening: true, currentSong: SONGS[0] },
   { id: 2, name: 'Олег', username: '@oleg', avatar: '/avatars/oleg.jpg', isOnline: true, isListening: true, currentSong: SONGS[1] },
@@ -73,3 +80,6 @@ export const CHAT_THREADS: ChatThread[] = [
     ],
   },
 ];
+
+export const TRENDING_TAGS = ['Поп', 'Рок', 'Хип-хоп', 'R&B', 'Электроника', 'Инди'];
+export const PODCAST_TAGS = ['Технологии', 'Стартапы', 'Интервью', 'Карьера', 'Психология', 'Бизнес'];

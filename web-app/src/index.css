@@ -669,7 +669,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 /* ===== MINI PLAYER ===== */
 .mini-player-area {
   position: absolute;
-  bottom: calc(76px + env(safe-area-inset-bottom));
+  bottom: calc(78px + env(safe-area-inset-bottom));
   left: 12px;
   right: 12px;
   z-index: 40;
@@ -708,16 +708,49 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   bottom: 0;
   left: 0;
   right: 0;
-  height: calc(76px + env(safe-area-inset-bottom));
+  height: calc(70px + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
-  background: var(--surface); border-top: 1px solid var(--border-light);
-  display: flex; justify-content: space-around; align-items: center; z-index: 50; padding-left: 8px; padding-right: 8px;
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  gap: 6px;
+  z-index: 50;
+  padding-left: 8px;
+  padding-right: 8px;
+  background: var(--surface);
+  border-top: 1px solid var(--border-light);
+  box-shadow: 0 -2px 10px rgba(24, 24, 33, 0.06);
+  animation: navDockIn 0.32s ease-out;
 }
-.nav-item { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; width: 64px; cursor: pointer; }
-.nav-item span { font-size: 11px; font-weight: 600; color: var(--text-muted); }
+
+.nav-item {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 0;
+  width: 64px;
+  height: 46px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  font: inherit;
+  border-radius: 20px;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+.nav-item span { font-size: 11px; font-weight: 600; color: var(--text-muted); transition: color 0.2s ease; z-index: 1; }
 .nav-item.active span { color: var(--purple-main); }
-.nav-icon-wrap { width: 48px; height: 32px; border-radius: var(--radius-pill); display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
-.nav-item.active .nav-icon-wrap { background: var(--purple-pale); color: var(--purple-main); }
+.nav-icon-wrap { width: 48px; height: 32px; border-radius: var(--radius-pill); display: flex; align-items: center; justify-content: center; color: var(--text-muted); z-index: 1; }
+.nav-item.active .nav-icon-wrap { color: var(--purple-main); }
+.nav-item.active { background: transparent; }
+
+@keyframes navDockIn {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
 
 /* ===== PROFILE ===== */
 .profile-card {

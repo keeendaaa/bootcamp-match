@@ -8,7 +8,7 @@ import {
   Plus, ChevronRight, RefreshCw,
   Mic, MicOff, X
 } from 'lucide-react';
-import { SONGS, FRIENDS, CHAT_THREADS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
+import { SONGS, PODCASTS, FRIENDS, CHAT_THREADS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
 import { getNativePlatform, isNativeApp, listenForAppUrls } from './mobile/capacitor';
 import {
   clearHandledWidgetParams,
@@ -92,6 +92,15 @@ type ApiMusicSearchItem = {
   source_url: string;
   stream_url: string | null;
 };
+type ApiPodcastSearchItem = {
+  podcast_id: string;
+  title: string;
+  artist: string;
+  duration?: string | null;
+  cover_url?: string | null;
+  source_url?: string | null;
+  stream_url?: string | null;
+};
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'https://matchapp.site/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
@@ -153,7 +162,9 @@ const normalizeBackendFileUrl = (raw?: string | null): string | undefined => {
 const normalizePlayableUrl = (raw?: string | null): string | undefined => {
   if (!raw) return undefined;
   if (raw.startsWith('/music/stream/')) return `${API_BASE}${raw}`;
+  if (raw.startsWith('/podcasts/stream/')) return `${API_BASE}${raw}`;
   if (raw.startsWith('/api/music/stream/')) return `${API_ORIGIN}${raw}`;
+  if (raw.startsWith('/api/podcasts/stream/')) return `${API_ORIGIN}${raw}`;
 
   const normalizedFileUrl = normalizeBackendFileUrl(raw);
   if (normalizedFileUrl && normalizedFileUrl !== raw) return normalizedFileUrl;
@@ -162,7 +173,9 @@ const normalizePlayableUrl = (raw?: string | null): string | undefined => {
     const parsed = new URL(raw, API_ORIGIN);
     const pathWithSearch = `${parsed.pathname}${parsed.search}`;
     if (parsed.pathname.startsWith('/music/stream/')) return `${API_BASE}${pathWithSearch}`;
+    if (parsed.pathname.startsWith('/podcasts/stream/')) return `${API_BASE}${pathWithSearch}`;
     if (parsed.pathname.startsWith('/api/music/stream/')) return `${API_ORIGIN}${pathWithSearch}`;
+    if (parsed.pathname.startsWith('/api/podcasts/stream/')) return `${API_ORIGIN}${pathWithSearch}`;
     if (/^https?:$/i.test(parsed.protocol)) return raw;
   } catch {
     // noop
@@ -1920,7 +1933,13 @@ export default function App() {
     <>
       <AppHeader tab={tab} currentUser={currentUser} onLogout={clearSession} />
 
-      <div className="screen-scroll" key={tab}>
+      <motion.div
+        className="screen-scroll"
+        key={tab}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.24, ease: 'easeOut' }}
+      >
         {tab === 'friends' && (
           <FriendsScreen
             friends={friends}
@@ -1969,7 +1988,7 @@ export default function App() {
             onEnqueue={enqueueSong}
           />
         )}
-      </div>
+      </motion.div>
 
       <div className="mini-player-area">
         <motion.div className="mini-player" onClick={() => setNpOpen(true)} whileTap={{ scale: 0.97 }}>
@@ -2655,19 +2674,19 @@ function DiscoverScreen({
   onEnqueue: (song: Song) => void;
   onShare: (s: Song) => void;
 }) {
+  type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string };
   const [section, setSection] = useState<'music' | 'podcasts'>('music');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [remoteSongs, setRemoteSongs] = useState<Song[]>([]);
+  const [remoteSongs, setRemoteSongs] = useState<DiscoverItem[]>([]);
   const [hasRemoteLoaded, setHasRemoteLoaded] = useState(false);
 
   useEffect(() => {
-    if (section !== 'music') {
-      setLoading(false);
-      setRemoteSongs([]);
-      setHasRemoteLoaded(false);
-      return;
-    }
+    setRemoteSongs([]);
+    setHasRemoteLoaded(false);
+  }, [section]);
+
+  useEffect(() => {
     if (!token && !isDemoMode) {
       setLoading(false);
       setRemoteSongs([]);
@@ -2675,27 +2694,48 @@ function DiscoverScreen({
       return;
     }
     const trimmed = query.trim();
-    const effectiveQuery = trimmed.length >= 2 ? trimmed : 'top hits';
+    const effectiveQuery = trimmed.length >= 2 ? trimmed : section === 'podcasts' ? 'top podcasts' : 'top hits';
 
     let cancelled = false;
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const accessToken = isDemoMode ? undefined : token;
-        const results = await apiRequest<ApiMusicSearchItem[]>(
-          `/music/search?q=${encodeURIComponent(effectiveQuery)}&limit=20`,
-          {},
-          accessToken
-        );
+        let mapped: DiscoverItem[] = [];
+        if (section === 'podcasts') {
+          const accessToken = isDemoMode ? undefined : token;
+          const results = await apiRequest<ApiPodcastSearchItem[]>(
+            `/podcasts/search?q=${encodeURIComponent(effectiveQuery)}&limit=20`,
+            {},
+            accessToken
+          );
+          mapped = results.map((item, idx) => ({
+            id: Number(item.podcast_id) || 3_000_000 + idx,
+            title: trimSongTitle(item.title || 'Podcast'),
+            artist: item.artist || 'Podcast',
+            cover: item.cover_url || PODCASTS[idx % PODCASTS.length].cover,
+            duration: item.duration || 'Подкаст',
+            streamUrl: item.stream_url || undefined,
+            isPodcast: true,
+            externalUrl: item.source_url || undefined,
+          }));
+        } else {
+          const accessToken = isDemoMode ? undefined : token;
+          const results = await apiRequest<ApiMusicSearchItem[]>(
+            `/music/search?q=${encodeURIComponent(effectiveQuery)}&limit=20`,
+            {},
+            accessToken
+          );
+          mapped = results.map((item, idx) => ({
+            id: 2_000_000 + idx,
+            title: trimSongTitle(item.title),
+            artist: item.artist,
+            cover: item.cover_url || SONGS[idx % SONGS.length].cover,
+            duration: item.duration || '—',
+            streamUrl: item.stream_url || undefined,
+            isPodcast: false,
+          }));
+        }
         if (cancelled) return;
-        const mapped: Song[] = results.map((item, idx) => ({
-          id: 2_000_000 + idx,
-          title: trimSongTitle(item.title),
-          artist: item.artist,
-          cover: item.cover_url || SONGS[idx % SONGS.length].cover,
-          duration: item.duration || '—',
-          streamUrl: item.stream_url || undefined,
-        }));
         setRemoteSongs(mapped);
         setHasRemoteLoaded(true);
       } catch (err) {
@@ -2705,7 +2745,7 @@ function DiscoverScreen({
         }
         const msg = err instanceof Error ? err.message : '';
         if (!msg.includes('401')) {
-          console.warn('YTM search failed', err);
+          console.warn(section === 'podcasts' ? 'Podcasts search failed' : 'YTM search failed', err);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -2718,7 +2758,11 @@ function DiscoverScreen({
     };
   }, [query, token, isDemoMode, section]);
 
-  const list = section === 'music' ? (hasRemoteLoaded ? remoteSongs : SONGS) : [];
+  const fallbackList: DiscoverItem[] =
+    section === 'podcasts'
+      ? PODCASTS.map((item) => ({ ...item, isPodcast: true }))
+      : SONGS.map((item) => ({ ...item, isPodcast: false }));
+  const list = hasRemoteLoaded ? remoteSongs : fallbackList;
 
   return (
     <>
@@ -2798,49 +2842,75 @@ function DiscoverScreen({
         {deviceNowPlayingError && <div className="auth-error" style={{ marginTop: 10 }}>{deviceNowPlayingError}</div>}
       </div>
 
-      <div className="search-bar glass-inset">
-        <Search size={18} />
-        <input
-          placeholder={section === 'music' ? 'Поиск треков и артистов...' : 'Поиск подкастов...'}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-      </div>
-      {loading && section === 'music' && <div className="search-status">Ищем треки в YouTube Music...</div>}
-      {!loading && section === 'music' && list.length === 0 && (
-        <div className="search-status">Ничего не найдено</div>
-      )}
-      {!loading && section === 'podcasts' && (
-        <div className="search-status">Раздел подкастов скоро появится</div>
-      )}
       <div className="tag-row">
         <button className={`tag-chip ${section === 'music' ? 'active' : ''}`} onClick={() => setSection('music')}>Музыка</button>
         <button className={`tag-chip ${section === 'podcasts' ? 'active' : ''}`} onClick={() => setSection('podcasts')}>Подкасты</button>
       </div>
+
+      <div className="search-bar glass-inset">
+        <Search size={18} />
+        <input
+          placeholder={section === 'podcasts' ? 'Поиск подкастов...' : 'Поиск треков и артистов...'}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+      {loading && (
+        <div className="search-status">{section === 'podcasts' ? 'Ищем подкасты...' : 'Ищем треки в каталоге...'}</div>
+      )}
+      {!loading && query.trim().length < 2 && list.length > 0 && (
+        <div className="search-status">{section === 'podcasts' ? 'Популярные подкасты' : 'Подборка Match'}</div>
+      )}
+      {!loading && list.length === 0 && (
+        <div className="search-status">Ничего не найдено</div>
+      )}
       <div className="section-header">
         <h3 className="section-title">{section === 'music' ? 'Музыка' : 'Подкасты'}</h3>
         <button className="section-more">Ещё <ChevronRight size={16} /></button>
       </div>
       {list.map((song, idx) => (
         <div className="trending-item" key={song.id}>
-          <img src={song.cover} alt="" onClick={() => onPlay(song, list, idx)} />
-          <div className="trending-info" onClick={() => onPlay(song, list, idx)}>
+          <img
+            src={song.cover}
+            alt=""
+            onClick={() => {
+              onPlay(song, list, idx);
+            }}
+          />
+          <div
+            className="trending-info"
+            onClick={() => {
+              onPlay(song, list, idx);
+            }}
+          >
             <h4>{song.title}</h4>
             <p>{song.artist} · {song.duration}</p>
           </div>
-          <motion.button
-            className="icon-btn glass-btn-sm"
-            onClick={() => void onToggleLike(song)}
-            animate={likedTrackKeys.has(trackKeyOfSong(song)) ? { scale: [1, 1.18, 1] } : { scale: 1 }}
-            transition={{ duration: 0.28 }}
-          >
-            <Heart size={16} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
-          </motion.button>
-          <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
-          <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
-          <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
-            <Play size={14} fill="#fff" />
-          </button>
+          {song.isPodcast ? (
+            <>
+              <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
+              <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
+              <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
+                <Play size={14} fill="#fff" />
+              </button>
+            </>
+          ) : (
+            <>
+              <motion.button
+                className="icon-btn glass-btn-sm"
+                onClick={() => void onToggleLike(song)}
+                animate={likedTrackKeys.has(trackKeyOfSong(song)) ? { scale: [1, 1.18, 1] } : { scale: 1 }}
+                transition={{ duration: 0.28 }}
+              >
+                <Heart size={16} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
+              </motion.button>
+              <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
+              <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
+              <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
+                <Play size={14} fill="#fff" />
+              </button>
+            </>
+          )}
         </div>
       ))}
     </>
@@ -3348,15 +3418,40 @@ function BottomNav({ tab, onChangeTab }: { tab: Tab; onChangeTab: (t: Tab) => vo
     { id: 'profile', icon: User, label: 'Профиль' },
   ];
   return (
-    <nav className="bottom-nav glass-nav">
-      {items.map((item) => {
+    <nav className="bottom-nav">
+      {items.map((item, idx) => {
         const Icon = item.icon;
         const active = tab === item.id;
         return (
-          <div key={item.id} className={`nav-item ${active ? 'active' : ''}`} onClick={() => onChangeTab(item.id)}>
-            <div className="nav-icon-wrap"><Icon size={22} fill={active ? 'currentColor' : 'none'} /></div>
-            <span>{item.label}</span>
-          </div>
+          <motion.button
+            key={item.id}
+            type="button"
+            className={`nav-item ${active ? 'active' : ''}`}
+            onClick={() => onChangeTab(item.id)}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: active ? -2 : 0, scale: active ? 1.02 : 1 }}
+            transition={{
+              opacity: { duration: 0.2, delay: idx * 0.04 },
+              y: { type: 'spring', stiffness: 320, damping: 24 },
+              scale: { type: 'spring', stiffness: 320, damping: 24 },
+            }}
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <motion.div
+              className="nav-icon-wrap"
+              animate={{ scale: active ? 1.08 : 1, rotate: active ? 2 : 0 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 22 }}
+            >
+              <Icon size={22} strokeWidth={active ? 2.4 : 2} />
+            </motion.div>
+            <motion.span
+              animate={{ y: active ? -1 : 0, opacity: active ? 1 : 0.86 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 24 }}
+            >
+              {item.label}
+            </motion.span>
+          </motion.button>
         );
       })}
     </nav>
