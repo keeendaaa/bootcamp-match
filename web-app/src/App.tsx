@@ -99,8 +99,8 @@ const ONBOARDING_SEEN_KEY = 'match_onboarding_seen';
 const DEMO_TOKEN = '__MATCH_DEMO__';
 const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksandr.jpg', '/avatars/galya.jpg'];
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
-const FRIENDS_POLL_INTERVAL_MS = 12_000;
-const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 30_000;
+const FRIENDS_POLL_INTERVAL_MS = 1_000;
+const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 1_000;
 const DEMO_USER: ApiUser = { id: 0, name: 'Demo User', email: 'demo@match.app', tag: 'demo', avatar_url: '/avatars/user.jpg' };
 
 const toUsername = (name: string) =>
@@ -248,6 +248,24 @@ const mapUploadedSongToUiSong = (song: ApiSong, fallbackName?: string): Song => 
     artist: song.artist || 'Вы',
     duration: song.duration || 'Локальный файл',
   };
+};
+
+const mapFriendSongToUiSong = (song: ApiSong, idx: number, friendName: string): Song => {
+  const mapped = mapBackendSongToUiSong(song, idx);
+  return {
+    ...mapped,
+    artist: song.artist || friendName,
+  };
+};
+
+const mergeUniqueSongs = (songs: Song[]): Song[] => {
+  const seen = new Set<string>();
+  return songs.filter((song) => {
+    const key = trackKeyOfSong(song);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 };
 
 const getSessionTargetSec = (session: ApiSession): number => {
@@ -414,6 +432,10 @@ export default function App() {
   const [npOpen, setNpOpen] = useState(false);
   const [openChat, setOpenChat] = useState<ChatThread | null>(null);
   const [shareModal, setShareModal] = useState<Song | null>(null);
+  const [friendProfile, setFriendProfile] = useState<Friend | null>(null);
+  const [friendProfileSongs, setFriendProfileSongs] = useState<Song[]>([]);
+  const [friendProfileLoading, setFriendProfileLoading] = useState(false);
+  const [friendProfileError, setFriendProfileError] = useState('');
   const [listeningWith, setListeningWith] = useState<Friend | null>(null);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
@@ -691,6 +713,9 @@ export default function App() {
     setFriends([]);
     setChatThreads([]);
     setOpenChat(null);
+    setFriendProfile(null);
+    setFriendProfileSongs([]);
+    setFriendProfileError('');
     setAuthError('');
     setProfileStats({ friends: 0, tracks: 0, likes: 0, playlists: 0 });
     setLikedTrackKeys(new Set());
@@ -973,6 +998,40 @@ export default function App() {
   };
 
   const findFriendById = (id: number): Friend | null => friends.find((f) => f.id === id) || null;
+
+  const openFriendProfile = async (friend: Friend) => {
+    setFriendProfile(friend);
+    setFriendProfileSongs(friend.currentSong ? [friend.currentSong] : []);
+    setFriendProfileError('');
+    setFriendProfileLoading(true);
+
+    if (isDemoMode) {
+      setFriendProfileLoading(false);
+      return;
+    }
+
+    try {
+      const remoteSongs = await apiRequest<ApiSong[]>(`/friends/${friend.id}/songs`, {}, token);
+      const mappedSongs = remoteSongs.map((item, idx) => mapFriendSongToUiSong(item, idx, friend.name));
+      setFriendProfileSongs(mergeUniqueSongs([...(friend.currentSong ? [friend.currentSong] : []), ...mappedSongs]));
+    } catch (err) {
+      setFriendProfileError(formatUserFacingError(err, 'Не удалось загрузить треки друга'));
+    } finally {
+      setFriendProfileLoading(false);
+    }
+  };
+
+  const addFriendSongToLibrary = async (song: Song): Promise<boolean> => {
+    const trackKey = trackKeyOfSong(song);
+    if (likedTrackKeys.has(trackKey)) return true;
+    return toggleLike(song);
+  };
+
+  useEffect(() => {
+    if (!friendProfile) return;
+    const updated = friends.find((item) => item.id === friendProfile.id);
+    if (updated) setFriendProfile(updated);
+  }, [friends, friendProfile]);
 
   useEffect(() => {
     if (!pendingWidgetRequest || !token || !currentUser) return;
@@ -1658,6 +1717,7 @@ export default function App() {
             onSearchUsers={searchUsers}
             onPlay={playSong}
             onShare={(s) => setShareModal(s)}
+            onOpenProfile={(friend) => void openFriendProfile(friend)}
           />
         )}
         {tab === 'discover' && (
@@ -1763,6 +1823,28 @@ export default function App() {
             friends={friends}
             onClose={() => setShareModal(null)}
             onSendToFriend={sendSongToFriendChat}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {friendProfile && (
+          <FriendProfileModal
+            friend={friendProfile}
+            songs={friendProfileSongs}
+            loading={friendProfileLoading}
+            error={friendProfileError}
+            likedTrackKeys={likedTrackKeys}
+            onClose={() => {
+              setFriendProfile(null);
+              setFriendProfileSongs([]);
+              setFriendProfileError('');
+            }}
+            onPlay={(song) => {
+              setFriendProfile(null);
+              playSong(song, friendProfile);
+            }}
+            onAddSong={addFriendSongToLibrary}
           />
         )}
       </AnimatePresence>
@@ -2025,6 +2107,117 @@ function ShareModal({
   );
 }
 
+function FriendProfileModal({
+  friend,
+  songs,
+  loading,
+  error,
+  likedTrackKeys,
+  onClose,
+  onPlay,
+  onAddSong,
+}: {
+  friend: Friend;
+  songs: Song[];
+  loading: boolean;
+  error: string;
+  likedTrackKeys: Set<string>;
+  onClose: () => void;
+  onPlay: (song: Song) => void;
+  onAddSong: (song: Song) => Promise<boolean>;
+}) {
+  const [savingTrackKey, setSavingTrackKey] = useState<string | null>(null);
+
+  const handleAddSong = async (song: Song) => {
+    const trackKey = trackKeyOfSong(song);
+    if (savingTrackKey || likedTrackKeys.has(trackKey)) return;
+    setSavingTrackKey(trackKey);
+    try {
+      await onAddSong(song);
+    } catch (err) {
+      alert(formatUserFacingError(err, 'Не удалось добавить трек'));
+    } finally {
+      setSavingTrackKey(null);
+    }
+  };
+
+  return (
+    <motion.div
+      className="share-overlay"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="share-sheet friend-profile-sheet glass-panel"
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        transition={{ type: 'spring', bounce: 0.12 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="share-header">
+          <h3>Профиль друга</h3>
+          <button className="icon-btn glass-btn-sm" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="friend-profile-hero glass-inset">
+          <img src={friend.avatar} alt={friend.name} />
+          <div className="friend-profile-meta">
+            <h3>{friend.name}</h3>
+            <p>{friend.username}</p>
+            <p>{friend.isListening ? 'Сейчас слушает музыку' : friend.lastActive || 'Недавно был в сети'}</p>
+            {friend.currentSong && (
+              <div className="friend-profile-actions">
+                <button className="profile-avatar-btn" onClick={() => onPlay(friend.currentSong!)}>
+                  Слушать текущий трек
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {error && <div className="auth-error">{error}</div>}
+        {loading && <div className="search-status">Загружаем треки друга...</div>}
+        {!loading && songs.length === 0 && <div className="search-status">У этого друга пока нет доступных треков</div>}
+
+        {songs.length > 0 && (
+          <>
+            <div className="section-header friend-profile-section-header">
+              <h3 className="section-title">Треки друга</h3>
+            </div>
+            {songs.map((song) => {
+              const trackKey = trackKeyOfSong(song);
+              const saved = likedTrackKeys.has(trackKey);
+              const saving = savingTrackKey === trackKey;
+              return (
+                <div className="trending-item friend-profile-track" key={trackKey}>
+                  <img src={song.cover} alt="" onClick={() => onPlay(song)} />
+                  <div className="trending-info" onClick={() => onPlay(song)}>
+                    <h4>{song.title}</h4>
+                    <p>{song.artist} · {song.duration}</p>
+                  </div>
+                  <button
+                    className="profile-avatar-btn friend-save-btn"
+                    onClick={() => void handleAddSong(song)}
+                    disabled={saved || saving}
+                  >
+                    {saving ? 'Добавляем...' : saved ? 'Уже у вас' : 'Добавить себе'}
+                  </button>
+                  <button className="play-btn-sm" onClick={() => onPlay(song)}>
+                    <Play size={14} fill="#fff" />
+                  </button>
+                </div>
+              );
+            })}
+          </>
+        )}
+      </motion.div>
+    </motion.div>
+  );
+}
+
 /* ========== FRIENDS SCREEN ========== */
 function FriendsScreen({
   friends,
@@ -2033,6 +2226,7 @@ function FriendsScreen({
   onSearchUsers,
   onPlay,
   onShare,
+  onOpenProfile,
 }: {
   friends: Friend[];
   loading: boolean;
@@ -2040,6 +2234,7 @@ function FriendsScreen({
   onSearchUsers: (query: string) => Promise<ApiUser[]>;
   onPlay: (s: Song, f?: Friend) => void;
   onShare: (s: Song) => void;
+  onOpenProfile: (friend: Friend) => void;
 }) {
   const [friendName, setFriendName] = useState('');
   const [suggestions, setSuggestions] = useState<ApiUser[]>([]);
@@ -2125,7 +2320,7 @@ function FriendsScreen({
           <span className="story-name">Вы</span>
         </div>
         {friends.map(f => (
-          <div className="story-item" key={f.id}>
+          <div className="story-item" key={f.id} onClick={() => onOpenProfile(f)}>
             <div className={`story-ring ${f.isListening ? '' : 'inactive'}`}>
               <img src={f.avatar} alt={f.name} />
             </div>
@@ -2144,7 +2339,7 @@ function FriendsScreen({
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: i * 0.08, type: 'spring', bounce: 0.25 }}
         >
-          <div className="widget-user">
+          <div className="widget-user friend-profile-trigger" onClick={() => onOpenProfile(friend)}>
             <div className="widget-avatar-wrap">
               <img src={friend.avatar} alt="" className="widget-avatar" />
               {friend.isOnline && <div className={`online-dot ${friend.isListening ? 'listening' : ''}`} />}

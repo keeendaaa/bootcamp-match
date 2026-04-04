@@ -510,6 +510,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.friend-profile-trigger { cursor: pointer; }
 
 .listening-badge {
   display: flex; align-items: center; gap: 4px;
@@ -1031,6 +1032,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   box-shadow: 0 -20px 50px rgba(3, 8, 23, 0.5);
   color: #142038;
 }
+.friend-profile-sheet { max-height: 88%; }
 
 .share-header {
   display: flex;
@@ -1065,6 +1067,63 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.friend-profile-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.friend-profile-hero img {
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.friend-profile-meta {
+  min-width: 0;
+}
+.friend-profile-meta h3 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 800;
+}
+.friend-profile-meta p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.friend-profile-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.friend-profile-section-header {
+  padding: 0;
+  margin-top: 20px;
+}
+.friend-profile-track {
+  padding-left: 0;
+  padding-right: 0;
+}
+.friend-save-btn {
+  margin: 0;
+  height: 34px;
+  padding: 0 12px;
+  color: var(--purple-main);
+  background: var(--purple-pale);
+  border: 1px solid rgba(127, 86, 217, 0.18);
+  flex-shrink: 0;
+}
+.friend-save-btn:hover {
+  background: rgba(127, 86, 217, 0.16);
+}
+.friend-save-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
 }
 
 .share-label { font-size: 13px; font-weight: 700; color: #516386; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
