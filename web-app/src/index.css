@@ -419,11 +419,13 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   border-radius: var(--radius-lg);
   padding: 20px;
   margin: 0 24px 16px;
+  max-width: calc(100% - 48px);
   box-shadow: var(--shadow-card);
   border: 1px solid var(--border-light);
+  overflow: hidden;
 }
 
-.widget-user { display: flex; align-items: center; margin-bottom: 16px; }
+.widget-user { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; min-width: 0; }
 .widget-avatar-wrap { position: relative; margin-right: 12px; }
 .widget-avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
 
@@ -433,14 +435,30 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 }
 .online-dot.listening { background: var(--orange-main); }
 
-.widget-user-info { flex: 1; }
-.widget-user-info h3 { margin: 0; font-size: 16px; font-weight: 700; }
-.widget-user-info p { margin: 0; font-size: 13px; color: var(--text-muted); font-weight: 500; }
+.widget-user-info { flex: 1; min-width: 0; }
+.widget-user-info h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.widget-user-info p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .listening-badge {
   display: flex; align-items: center; gap: 4px;
   font-size: 11px; font-weight: 700; color: var(--orange-main);
   background: var(--orange-pale); padding: 4px 10px; border-radius: var(--radius-pill);
+  flex-shrink: 0;
 }
 
 .eq-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
@@ -451,12 +469,13 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 
 @keyframes eqBounce { 0% { height: 4px; } 100% { height: 14px; } }
 
-.song-row-wrap { display: flex; align-items: center; gap: 8px; }
-.song-row-wrap .song-row { flex: 1; }
+.song-row-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.song-row-wrap .song-row { flex: 1; min-width: 0; }
 
 .song-row {
   display: flex; align-items: center; background: var(--surface-hover);
   border-radius: var(--radius-md); padding: 10px; gap: 12px; cursor: pointer;
+  min-width: 0;
 }
 .song-row:hover { background: var(--purple-pale); }
 .song-row img { width: 52px; height: 52px; border-radius: var(--radius-xs); object-fit: cover; }
