@@ -663,7 +663,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 /* ===== MINI PLAYER ===== */
 .mini-player-area {
   position: absolute;
-  bottom: calc(76px + env(safe-area-inset-bottom));
+  bottom: calc(70px + env(safe-area-inset-bottom));
   left: 12px;
   right: 12px;
   z-index: 40;
@@ -702,7 +702,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   bottom: 0;
   left: 0;
   right: 0;
-  height: calc(86px + env(safe-area-inset-bottom));
+  height: calc(70px + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   display: flex;
   justify-content: space-around;
@@ -724,7 +724,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   gap: 4px;
   padding: 8px 0;
   width: 64px;
-  height: 58px;
+  height: 46px;
   cursor: pointer;
   border: none;
   background: rgba(255, 255, 255, 0.88);
