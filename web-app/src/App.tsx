@@ -1398,6 +1398,32 @@ export default function App() {
     }
   };
 
+  const sendSongToFriendChat = async (friend: Friend, song: Song) => {
+    if (!token) return;
+    try {
+      await apiRequest<ApiDirectMessage>(
+        `/chats/${friend.id}/messages`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            text: `🎵 ${song.title}`,
+            song: {
+              title: song.title,
+              artist: song.artist,
+              cover_url: song.cover,
+              stream_url: song.streamUrl || null,
+              duration: song.duration || null,
+            },
+          }),
+        },
+        token
+      );
+      await loadChatThreads(token);
+    } catch (err) {
+      throw new Error(formatUserFacingError(err, 'Не удалось отправить трек в чат'));
+    }
+  };
+
   const playSong = (song: Song, friend?: Friend, queue?: Song[], selectedIndex?: number) => {
     if (queue && queue.length > 0) {
       const resolvedIdx = typeof selectedIndex === 'number'
@@ -1543,7 +1569,12 @@ export default function App() {
 
       <AnimatePresence>
         {shareModal && (
-          <ShareModal song={shareModal} friends={friends} onClose={() => setShareModal(null)} />
+          <ShareModal
+            song={shareModal}
+            friends={friends}
+            onClose={() => setShareModal(null)}
+            onSendToFriend={sendSongToFriendChat}
+          />
         )}
       </AnimatePresence>
     </>
@@ -1649,18 +1680,30 @@ function AuthScreen({
 }
 
 /* ========== SHARE MODAL ========== */
-function ShareModal({ song, friends, onClose }: { song: Song; friends: Friend[]; onClose: () => void }) {
+function ShareModal({
+  song,
+  friends,
+  onClose,
+  onSendToFriend,
+}: {
+  song: Song;
+  friends: Friend[];
+  onClose: () => void;
+  onSendToFriend: (friend: Friend, song: Song) => Promise<void>;
+}) {
+  const [sendingFriendId, setSendingFriendId] = useState<number | null>(null);
+
   const handleShare = async (friend: Friend) => {
-    const text = `🎵 ${friend.name}, послушай "${song.title}" — ${song.artist}!`;
+    if (sendingFriendId !== null) return;
+    setSendingFriendId(friend.id);
     try {
-      if (navigator.share) {
-        await navigator.share({ title: song.title, text, url: window.location.href });
-      } else {
-        await navigator.clipboard.writeText(text);
-        alert(`Отправлено ${friend.name}! 📋`);
-      }
-    } catch {}
-    onClose();
+      await onSendToFriend(friend, song);
+      onClose();
+    } catch (err) {
+      alert(formatUserFacingError(err, 'Не удалось отправить трек'));
+    } finally {
+      setSendingFriendId(null);
+    }
   };
 
   const handleCopy = async () => {
