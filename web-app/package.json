@@ -27,7 +27,6 @@
     "@capacitor/ios": "^8.0.0",
     "colorthief": "^2.6.0",
     "framer-motion": "^12.38.0",
-    "liquid-glass-react": "^1.1.1",
     "lucide-react": "^0.542.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"

@@ -711,22 +711,9 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   z-index: 50;
   padding-left: 8px;
   padding-right: 8px;
-}
-
-.liquid-nav-shell {
   background: var(--surface);
   border-top: 1px solid var(--border-light);
   box-shadow: 0 -8px 24px rgba(24, 24, 33, 0.08);
-}
-
-.nav-item-liquid {
-  width: calc((100% - 26px) / 4);
-  max-width: 92px;
-  min-width: 72px;
-}
-
-.nav-item-liquid > div {
-  width: 100%;
 }
 
 .nav-item {
@@ -736,7 +723,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   justify-content: center;
   gap: 4px;
   padding: 8px 0;
-  width: 100%;
+  width: 64px;
   height: 58px;
   cursor: pointer;
   border: none;
