@@ -152,3 +152,21 @@ class SessionPublic(BaseModel):
     is_playing: bool
     song: SongPublic | None
     updated_at: str | None = None
+
+
+class DirectMessageCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class DirectMessagePublic(BaseModel):
+    id: int
+    sender_id: int
+    recipient_id: int
+    text: str
+    created_at: str
+
+
+class DirectThreadPublic(BaseModel):
+    friend: UserPublic
+    last_message: DirectMessagePublic | None = None
+    unread: int = 0

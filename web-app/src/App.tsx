@@ -5,10 +5,10 @@ import {
   Play, Pause, SkipForward, SkipBack,
   ChevronDown, Heart, Shuffle, Repeat,
   Share2, Send, ArrowLeft, Bell, LogOut,
-  Music, Plus, ChevronRight,
+  Plus, ChevronRight,
   Mic, MicOff, X
 } from 'lucide-react';
-import { SONGS, FRIENDS, TRENDING_TAGS, type Song, type Friend, type ChatThread } from './data/mockData';
+import { SONGS, FRIENDS, TRENDING_TAGS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
 import { listenForAppUrls } from './mobile/capacitor';
 import {
   clearHandledWidgetParams,
@@ -59,6 +59,18 @@ type ApiSessionMessage = {
   sender_id: number;
   text: string;
   created_at: string;
+};
+type ApiDirectMessage = {
+  id: number;
+  sender_id: number;
+  recipient_id: number;
+  text: string;
+  created_at: string;
+};
+type ApiDirectThread = {
+  friend: ApiUser;
+  last_message: ApiDirectMessage | null;
+  unread: number;
 };
 type AuthMode = 'login' | 'register';
 type RepeatMode = 'off' | 'all' | 'one';
@@ -222,23 +234,32 @@ const getSessionTargetSec = (session: ApiSession): number => {
   return Math.max(0, base + Math.max(0, elapsed));
 };
 
-const buildThreadsFromFriends = (friends: Friend[]): ChatThread[] =>
-  friends.slice(0, 4).map((friend, i) => ({
-    friend,
-    unread: i % 2,
-    messages: [
-      { id: i * 10 + 1, senderId: friend.id, text: 'Привет! Как дела?', time: 'Недавно' },
-      ...(friend.currentSong ? [{ id: i * 10 + 2, senderId: friend.id, text: '', time: 'Недавно', songShare: friend.currentSong }] : []),
-    ],
-  }));
+const formatChatTime = (iso: string): string => {
+  const ts = Date.parse(iso);
+  if (!Number.isFinite(ts)) return 'Сейчас';
+  const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (diffSec < 60) return 'Сейчас';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} мин назад`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} ч назад`;
+  const date = new Date(ts);
+  return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}`;
+};
 
-const buildFallbackThread = (friend: Friend): ChatThread => ({
-  friend,
-  unread: 0,
-  messages: [
-    { id: Date.now(), senderId: friend.id, text: 'Открыли чат из виджета.', time: 'Сейчас' },
-    ...(friend.currentSong ? [{ id: Date.now() + 1, senderId: friend.id, text: '', time: 'Сейчас', songShare: friend.currentSong }] : []),
-  ],
+const mapDirectMessageToChatMessage = (message: ApiDirectMessage): ChatMessage => ({
+  id: message.id,
+  senderId: message.sender_id,
+  text: message.text,
+  time: formatChatTime(message.created_at),
+});
+
+const mapApiUserToFriend = (user: ApiUser, idx: number): Friend => ({
+  id: user.id,
+  name: user.name,
+  username: user.tag ? `@${user.tag}` : toUsername(user.name),
+  avatar: normalizeAvatarUrl(user.avatar_url) || AVATAR_POOL[idx % AVATAR_POOL.length] || AVATAR_POOL[0],
+  isOnline: true,
+  isListening: false,
+  lastActive: LAST_ACTIVE_POOL[idx % LAST_ACTIVE_POOL.length],
 });
 
 async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
@@ -717,12 +738,67 @@ export default function App() {
       );
 
       setFriends(mapped);
-      const threads = buildThreadsFromFriends(mapped);
-      setChatThreads(threads);
-      setOpenChat((prev) => (prev ? threads.find((t) => t.friend.id === prev.friend.id) ?? null : null));
+      try {
+        await loadChatThreads(accessToken, { baseFriends: mapped });
+      } catch {
+        // noop: friends are still usable even if chat threads failed to refresh
+      }
     } finally {
       if (!silent) setIsLoadingData(false);
     }
+  };
+
+  const loadChatThreads = async (accessToken: string, options?: { baseFriends?: Friend[] }) => {
+    const baseFriends = options?.baseFriends || friendsRef.current;
+    const remoteThreads = await apiRequest<ApiDirectThread[]>('/chats/threads', {}, accessToken);
+    const mappedThreads: ChatThread[] = remoteThreads.map((thread, idx) => {
+      const existing = baseFriends.find((friend) => friend.id === thread.friend.id);
+      const friend: Friend = existing
+        ? {
+            ...existing,
+            name: thread.friend.name,
+            username: thread.friend.tag ? `@${thread.friend.tag}` : existing.username,
+            avatar: normalizeAvatarUrl(thread.friend.avatar_url) || existing.avatar,
+          }
+        : mapApiUserToFriend(thread.friend, idx);
+      return {
+        friend,
+        unread: openChat?.friend.id === friend.id ? 0 : Math.max(0, thread.unread || 0),
+        messages: thread.last_message ? [mapDirectMessageToChatMessage(thread.last_message)] : [],
+      };
+    });
+    setChatThreads(mappedThreads);
+    setOpenChat((prev) => {
+      if (!prev) return prev;
+      const updated = mappedThreads.find((thread) => thread.friend.id === prev.friend.id);
+      if (!updated) return prev;
+      return {
+        ...updated,
+        messages: prev.messages.length ? prev.messages : updated.messages,
+        unread: 0,
+      };
+    });
+  };
+
+  const updateThreadPreview = (friendId: number, message: ChatMessage | null, unread: number) => {
+    setChatThreads((prev) =>
+      prev.map((thread) =>
+        thread.friend.id === friendId
+          ? {
+              ...thread,
+              unread: Math.max(0, unread),
+              messages: message ? [message] : thread.messages,
+            }
+          : thread
+      )
+    );
+  };
+
+  const openChatThread = (thread: ChatThread) => {
+    setOpenChat({ ...thread, unread: 0 });
+    setChatThreads((prev) =>
+      prev.map((item) => (item.friend.id === thread.friend.id ? { ...item, unread: 0 } : item))
+    );
   };
 
   const loadProfileData = async (accessToken: string) => {
@@ -750,13 +826,17 @@ export default function App() {
     const friend = findFriendById(pendingWidgetRequest.friendId);
     if (!friend) return;
 
-    const nextThread = chatThreads.find((thread) => thread.friend.id === friend.id) || buildFallbackThread(friend);
+    const nextThread = chatThreads.find((thread) => thread.friend.id === friend.id) || {
+      friend,
+      unread: 0,
+      messages: [],
+    };
     const targetSong = friend.currentSong && (!pendingWidgetRequest.trackId || friend.currentSong.id === pendingWidgetRequest.trackId)
       ? friend.currentSong
       : friend.currentSong;
 
     setTab('chat');
-    setOpenChat(nextThread);
+    openChatThread(nextThread);
     setShareModal(null);
     setNpOpen(false);
     setListeningWith(friend);
@@ -776,7 +856,7 @@ export default function App() {
 
     setPendingWidgetRequest(null);
     clearHandledWidgetParams();
-  }, [pendingWidgetRequest, token, currentUser, chatThreads, friends, findFriendById, selectSongInPlayer, startPlayback]);
+  }, [pendingWidgetRequest, token, currentUser, chatThreads, friends, findFriendById, selectSongInPlayer, startPlayback, openChatThread]);
 
   const toggleLike = async (song: Song): Promise<boolean> => {
     if (!token) return false;
@@ -955,6 +1035,23 @@ export default function App() {
     if (!currentUser) return;
     void publishFriendsWidgetSnapshot(friends, currentUser.name).catch(() => undefined);
   }, [friends, currentUser]);
+
+  useEffect(() => {
+    if (!token || !currentUser) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        await loadChatThreads(token);
+      } catch {
+        // noop
+      }
+      if (!stop) setTimeout(tick, 3500);
+    };
+    void tick();
+    return () => {
+      stop = true;
+    };
+  }, [token, currentUser]);
 
   useEffect(() => {
     if (!token || !currentUser) return;
@@ -1337,7 +1434,7 @@ export default function App() {
             onShare={(s) => setShareModal(s)}
           />
         )}
-        {tab === 'chat' && <ChatListScreen threads={chatThreads} onOpenChat={setOpenChat} />}
+        {tab === 'chat' && <ChatListScreen threads={chatThreads} onOpenChat={openChatThread} />}
         {tab === 'profile' && (
           <ProfileScreen
             currentUser={currentUser}
@@ -1406,7 +1503,14 @@ export default function App() {
 
       <AnimatePresence>
         {openChat && (
-          <ChatDetail thread={openChat} onClose={() => setOpenChat(null)} onPlay={(s) => playSong(s)} />
+          <ChatDetail
+            thread={openChat}
+            token={token}
+            currentUserId={currentUser.id}
+            onClose={() => setOpenChat(null)}
+            onPlay={(s) => playSong(s)}
+            onThreadActivity={(friendId, lastMessage, unread) => updateThreadPreview(friendId, lastMessage, unread)}
+          />
         )}
       </AnimatePresence>
 
@@ -1857,6 +1961,9 @@ function DiscoverScreen({
 
 /* ========== CHAT LIST ========== */
 function ChatListScreen({ threads, onOpenChat }: { threads: ChatThread[]; onOpenChat: (t: ChatThread) => void }) {
+  if (!threads.length) {
+    return <div className="search-status">Чатов пока нет. Добавьте друзей, чтобы начать переписку.</div>;
+  }
   return (
     <>
       <div className="tab-pills">
@@ -1865,6 +1972,7 @@ function ChatListScreen({ threads, onOpenChat }: { threads: ChatThread[]; onOpen
       </div>
       {threads.map((thread) => {
         const lastMsg = thread.messages[thread.messages.length - 1];
+        const preview = lastMsg?.text?.trim() || 'Сообщений пока нет';
         return (
           <motion.div className="chat-item" key={thread.friend.id} onClick={() => onOpenChat(thread)} whileTap={{ scale: 0.98 }}>
             <div className="chat-avatar-wrap">
@@ -1873,10 +1981,10 @@ function ChatListScreen({ threads, onOpenChat }: { threads: ChatThread[]; onOpen
             </div>
             <div className="chat-info">
               <h4>{thread.friend.name}</h4>
-              <p>{lastMsg.songShare ? '🎵 Поделился треком' : lastMsg.text}</p>
+              <p>{preview}</p>
             </div>
             <div className="chat-meta">
-              <span className="chat-time">{lastMsg.time}</span>
+              <span className="chat-time">{lastMsg?.time || ''}</span>
               {thread.unread > 0 && <div className="unread-badge">{thread.unread}</div>}
             </div>
           </motion.div>
@@ -1887,20 +1995,92 @@ function ChatListScreen({ threads, onOpenChat }: { threads: ChatThread[]; onOpen
 }
 
 /* ========== CHAT DETAIL ========== */
-function ChatDetail({ thread, onClose, onPlay }: { thread: ChatThread; onClose: () => void; onPlay: (s: Song) => void }) {
+function ChatDetail({
+  thread,
+  token,
+  currentUserId,
+  onClose,
+  onPlay,
+  onThreadActivity,
+}: {
+  thread: ChatThread;
+  token: string;
+  currentUserId: number;
+  onClose: () => void;
+  onPlay: (s: Song) => void;
+  onThreadActivity: (friendId: number, lastMessage: ChatMessage | null, unread: number) => void;
+}) {
   const [input, setInput] = useState('');
-  const [msgs, setMsgs] = useState(thread.messages);
-  const [songPicker, setSongPicker] = useState(false);
+  const [msgs, setMsgs] = useState<ChatMessage[]>(thread.messages);
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [chatError, setChatError] = useState('');
+  const lastDirectMessageIdRef = useRef(0);
 
-  const sendMsg = () => {
-    if (!input.trim()) return;
-    setMsgs(prev => [...prev, { id: Date.now(), senderId: 0, text: input, time: 'Сейчас' }]);
-    setInput('');
-  };
+  useEffect(() => {
+    let stop = false;
+    setMsgs([]);
+    setChatError('');
+    setLoading(true);
+    lastDirectMessageIdRef.current = 0;
 
-  const shareSongInChat = (song: Song) => {
-    setMsgs(prev => [...prev, { id: Date.now(), senderId: 0, text: '', time: 'Сейчас', songShare: song }]);
-    setSongPicker(false);
+    const poll = async () => {
+      try {
+        const remote = await apiRequest<ApiDirectMessage[]>(
+          `/chats/${thread.friend.id}/messages?after_id=${lastDirectMessageIdRef.current}`,
+          {},
+          token
+        );
+        if (stop) return;
+        if (remote.length > 0) {
+          const nextMessages = remote.map(mapDirectMessageToChatMessage);
+          setMsgs((prev) => {
+            const merged = [...prev, ...nextMessages];
+            const last = merged[merged.length - 1] || null;
+            onThreadActivity(thread.friend.id, last, 0);
+            return merged;
+          });
+          lastDirectMessageIdRef.current = nextMessages[nextMessages.length - 1].id;
+        }
+      } catch (err) {
+        if (!stop) setChatError(formatUserFacingError(err, 'Не удалось загрузить сообщения'));
+      } finally {
+        if (!stop) setLoading(false);
+      }
+      if (!stop) setTimeout(poll, 1700);
+    };
+
+    void poll();
+    return () => {
+      stop = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread.friend.id, token]);
+
+  const sendMsg = async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+    setSending(true);
+    setChatError('');
+    try {
+      const created = await apiRequest<ApiDirectMessage>(
+        `/chats/${thread.friend.id}/messages`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ text }),
+        },
+        token
+      );
+      const next = mapDirectMessageToChatMessage(created);
+      setMsgs((prev) => [...prev, next]);
+      lastDirectMessageIdRef.current = Math.max(lastDirectMessageIdRef.current, next.id);
+      onThreadActivity(thread.friend.id, next, 0);
+      setInput('');
+    } catch (err) {
+      setChatError(formatUserFacingError(err, 'Не удалось отправить сообщение'));
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -1914,8 +2094,10 @@ function ChatDetail({ thread, onClose, onPlay }: { thread: ChatThread; onClose: 
         <h3>{thread.friend.name}</h3>
       </div>
       <div className="messages-list">
+        {loading && msgs.length === 0 && <div className="search-status">Загружаем сообщения...</div>}
+        {!loading && msgs.length === 0 && <div className="search-status">Сообщений пока нет</div>}
         {msgs.map((msg) => {
-          const isSent = msg.senderId === 0;
+          const isSent = msg.senderId === currentUserId;
           if (msg.songShare) {
             return (
               <div key={msg.id} className={`msg-song-share ${isSent ? 'sent' : 'received'}`}>
@@ -1934,41 +2116,14 @@ function ChatDetail({ thread, onClose, onPlay }: { thread: ChatThread; onClose: 
         })}
       </div>
 
-      {/* Song picker overlay */}
-      <AnimatePresence>
-        {songPicker && (
-          <motion.div className="song-picker"
-            initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-            transition={{ type: 'spring', bounce: 0.12 }}
-          >
-            <div className="song-picker-header">
-              <h4>Поделиться треком</h4>
-              <button className="icon-btn glass-btn-sm" onClick={() => setSongPicker(false)}><X size={18} /></button>
-            </div>
-            {SONGS.map(song => (
-              <motion.div key={song.id} className="song-picker-item" whileTap={{ scale: 0.97 }} onClick={() => shareSongInChat(song)}>
-                <img src={song.cover} alt="" />
-                <div className="song-picker-info">
-                  <h5>{song.title}</h5>
-                  <p>{song.artist}</p>
-                </div>
-                <Send size={16} color="var(--purple-main)" />
-              </motion.div>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       <div className="chat-input-bar">
-        <button className="icon-btn glass-btn-sm" onClick={() => setSongPicker(true)}>
-          <Music size={18} color="var(--purple-main)" />
-        </button>
         <input placeholder="Введите сообщение..." value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') sendMsg(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') void sendMsg(); }}
         />
-        <button className="send-btn" onClick={sendMsg}><Send size={18} /></button>
+        <button className="send-btn" onClick={() => void sendMsg()} disabled={sending}><Send size={18} /></button>
       </div>
+      {chatError && <div className="auth-error" style={{ margin: '8px 12px 12px' }}>{chatError}</div>}
     </motion.div>
   );
 }

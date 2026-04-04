@@ -14,11 +14,14 @@ from ytmusicapi import YTMusic
 
 from .auth import create_access_token, get_current_user, hash_password, verify_password
 from .db import get_db
-from .models import Friendship, LikedTrack, ListenMessage, ListenSession, Song, User
+from .models import DirectMessage, Friendship, LikedTrack, ListenMessage, ListenSession, Song, User
 from .schemas import (
     AuthLoginRequest,
     AuthRegisterRequest,
     AvatarUpdateRequest,
+    DirectMessageCreate,
+    DirectMessagePublic,
+    DirectThreadPublic,
     FriendAddRequest,
     LikedTrackPublic,
     LikedTrackUpsert,
@@ -121,6 +124,17 @@ def session_to_public(session: ListenSession, db: Session) -> SessionPublic:
         is_playing=session.is_playing,
         song=song,
         updated_at=updated_at,
+    )
+
+
+def direct_message_to_public(message: DirectMessage) -> DirectMessagePublic:
+    created_at = message.created_at.replace(tzinfo=timezone.utc).isoformat() if message.created_at else ""
+    return DirectMessagePublic(
+        id=message.id,
+        sender_id=message.sender_id,
+        recipient_id=message.recipient_id,
+        text=message.text,
+        created_at=created_at,
     )
 
 
@@ -403,6 +417,103 @@ def list_friends(
 
     friends = db.query(User).filter(User.id.in_(ids)).order_by(User.name).all()
     return [user_to_public(friend) for friend in friends]
+
+
+@app.get("/chats/threads", response_model=list[DirectThreadPublic])
+def list_direct_threads(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[DirectThreadPublic]:
+    friend_rows = (
+        db.query(User)
+        .join(Friendship, Friendship.friend_id == User.id)
+        .filter(Friendship.user_id == current_user.id)
+        .order_by(User.name.asc())
+        .all()
+    )
+    if not friend_rows:
+        return []
+
+    threads: list[DirectThreadPublic] = []
+    for friend in friend_rows:
+        last_message = (
+            db.query(DirectMessage)
+            .filter(
+                (
+                    (DirectMessage.sender_id == current_user.id)
+                    & (DirectMessage.recipient_id == friend.id)
+                )
+                | (
+                    (DirectMessage.sender_id == friend.id)
+                    & (DirectMessage.recipient_id == current_user.id)
+                )
+            )
+            .order_by(DirectMessage.id.desc())
+            .first()
+        )
+        unread = (
+            db.query(DirectMessage)
+            .filter(DirectMessage.sender_id == friend.id, DirectMessage.recipient_id == current_user.id)
+            .count()
+        )
+        threads.append(
+            DirectThreadPublic(
+                friend=user_to_public(friend),
+                last_message=direct_message_to_public(last_message) if last_message else None,
+                unread=unread,
+            )
+        )
+    return threads
+
+
+@app.get("/chats/{friend_id}/messages", response_model=list[DirectMessagePublic])
+def list_direct_messages(
+    friend_id: int,
+    after_id: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[DirectMessagePublic]:
+    if not is_friend(db, current_user.id, friend_id):
+        raise HTTPException(status_code=403, detail="Not friends")
+
+    messages = (
+        db.query(DirectMessage)
+        .filter(
+            (
+                (DirectMessage.sender_id == current_user.id)
+                & (DirectMessage.recipient_id == friend_id)
+            )
+            | (
+                (DirectMessage.sender_id == friend_id)
+                & (DirectMessage.recipient_id == current_user.id)
+            )
+        )
+        .filter(DirectMessage.id > after_id)
+        .order_by(DirectMessage.id.asc())
+        .all()
+    )
+    return [direct_message_to_public(message) for message in messages]
+
+
+@app.post("/chats/{friend_id}/messages", response_model=DirectMessagePublic)
+def send_direct_message(
+    friend_id: int,
+    payload: DirectMessageCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DirectMessagePublic:
+    if not is_friend(db, current_user.id, friend_id):
+        raise HTTPException(status_code=403, detail="Not friends")
+
+    message = DirectMessage(
+        sender_id=current_user.id,
+        recipient_id=friend_id,
+        text=payload.text.strip(),
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+    return direct_message_to_public(message)
 
 
 @app.get("/me/stats", response_model=ProfileStatsResponse)
