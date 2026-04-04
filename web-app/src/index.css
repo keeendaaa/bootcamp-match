@@ -730,7 +730,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   height: 46px;
   cursor: pointer;
   border: none;
-  background: #f3f1f8;
+  background: transparent;
   font: inherit;
   border-radius: 20px;
   transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
@@ -739,7 +739,7 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 .nav-item.active span { color: var(--purple-main); }
 .nav-icon-wrap { width: 48px; height: 32px; border-radius: var(--radius-pill); display: flex; align-items: center; justify-content: center; color: var(--text-muted); z-index: 1; }
 .nav-item.active .nav-icon-wrap { color: var(--purple-main); }
-.nav-item.active { background: var(--purple-pale); }
+.nav-item.active { background: transparent; }
 
 @keyframes navDockIn {
   from { transform: translateY(10px); opacity: 0; }
