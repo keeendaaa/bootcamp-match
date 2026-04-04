@@ -248,7 +248,12 @@ async function apiRequest<T>(path: string, options: RequestInit = {}, token?: st
   }
   if (token) headers.set('Authorization', `Bearer ${token}`);
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  } catch {
+    throw new Error('NETWORK_ERROR');
+  }
   if (!res.ok) {
     let detailMessage = res.statusText;
     const text = await res.text();
@@ -271,20 +276,67 @@ async function apiRequest<T>(path: string, options: RequestInit = {}, token?: st
   return res.json() as Promise<T>;
 }
 
-function formatAuthError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : 'Ошибка авторизации';
-  const msg = raw.replace(/^API \d+:\s*/i, '').trim();
-  const lower = msg.toLowerCase();
+function formatUserFacingError(err: unknown, fallback = 'Что-то пошло не так'): string {
+  const raw = err instanceof Error ? err.message : fallback;
+  const statusMatch = raw.match(/^API\s+(\d+):\s*/i);
+  const status = statusMatch ? Number.parseInt(statusMatch[1], 10) : null;
+  const message = raw.replace(/^API\s+\d+:\s*/i, '').trim();
+  const lower = message.toLowerCase();
+  const rawLower = raw.toLowerCase();
 
-  if (lower.includes('at least 6 characters')) return 'Пароль слишком короткий. Минимум 6 символов.';
+  if (
+    raw === 'NETWORK_ERROR' ||
+    rawLower.includes('failed to fetch') ||
+    rawLower.includes('networkerror') ||
+    rawLower.includes('load failed') ||
+    rawLower.includes('network request failed')
+  ) {
+    return 'Нет соединения с сервером. Проверьте интернет или доступность API.';
+  }
+
+  if (status === 401 || lower.includes('invalid credentials')) {
+    return 'Нужно войти заново или проверить правильность email и пароля.';
+  }
+  if (status === 403 || lower === 'forbidden' || lower.includes('not friends')) {
+    return 'Действие недоступно: не хватает прав или пользователь не у вас в друзьях.';
+  }
+  if (status === 404 && lower.includes('user not found')) return 'Пользователь не найден.';
+  if (status === 404 && lower.includes('friend not found')) return 'Друг не найден.';
+  if (status === 404 && lower.includes('song not found')) return 'Трек не найден на сервере.';
+  if (status === 404 && lower.includes('session not found')) return 'Совместная сессия не найдена.';
+  if (status === 404) return 'Нужные данные не найдены.';
+  if (status === 413 || lower.includes('request entity too large') || lower.includes('payload too large')) {
+    return 'Файл слишком большой для текущего лимита загрузки на сервере.';
+  }
+  if (status === 429) return 'Слишком много запросов. Попробуйте еще раз чуть позже.';
+  if (status !== null && status >= 500) {
+    return 'Сервер временно недоступен. Попробуйте еще раз позже.';
+  }
+
   if (lower.includes('email already registered')) return 'Этот email уже зарегистрирован.';
   if (lower.includes('name already exists')) return 'Это имя уже занято.';
-  if (lower.includes('invalid credentials')) return 'Неверный email или пароль.';
-  if (lower.includes('user not found')) return 'Пользователь с таким email не найден.';
+  if (lower.includes('user not found')) return 'Пользователь не найден.';
+  if (lower.includes('friend not found')) return 'Друг не найден.';
+  if (lower.includes('cannot add yourself')) return 'Нельзя добавить самого себя.';
+  if (lower.includes('use @tag to add friends')) return 'Добавляйте друзей по тегу в формате @username.';
+  if (lower.includes('invalid tag')) return 'Укажите корректный тег.';
+  if (lower.includes('tag is too short')) return 'Тег должен быть не короче 2 символов.';
   if (lower.includes('field required')) return 'Заполните все обязательные поля.';
-  if (lower.includes('string should have at least')) return 'Слишком короткое значение в одном из полей.';
+  if (lower.includes('string should have at least')) return 'Одно из полей заполнено слишком коротко.';
+  if (lower.includes('at least 6 characters')) return 'Пароль слишком короткий. Минимум 6 символов.';
+  if (lower.includes('unsupported avatar format')) return 'Аватар должен быть в формате PNG, JPEG или WEBP.';
+  if (lower.includes('file name is required') || lower.includes('invalid file name')) return 'Файл не удалось прочитать. Выберите другой.';
+  if (lower.includes('failed to resolve stream') || lower.includes('upstream stream error')) {
+    return 'Источник аудио временно недоступен.';
+  }
+  if (lower.includes('session ended')) return 'Совместное прослушивание уже завершено.';
+  if (lower.includes('session already ended')) return 'Эта сессия уже завершена.';
 
-  return msg || 'Ошибка авторизации';
+  return message || fallback;
+}
+
+function formatAuthError(err: unknown): string {
+  return formatUserFacingError(err, 'Ошибка авторизации');
 }
 
 export default function App() {
@@ -740,7 +792,7 @@ export default function App() {
       await loadProfileData(token);
       return result.liked;
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Не удалось поставить лайк');
+      setAuthError(formatUserFacingError(err, 'Не удалось поставить лайк'));
       return false;
     }
   };
@@ -749,33 +801,45 @@ export default function App() {
     if (!token) return;
     const data = new FormData();
     data.append('file', file);
-    const updated = await apiRequest<ApiUser>('/me/avatar/upload', {
-      method: 'POST',
-      body: data,
-    }, token);
-    setCurrentUser({ ...updated, avatar_url: normalizeAvatarUrl(updated.avatar_url) || null });
+    try {
+      const updated = await apiRequest<ApiUser>('/me/avatar/upload', {
+        method: 'POST',
+        body: data,
+      }, token);
+      setCurrentUser({ ...updated, avatar_url: normalizeAvatarUrl(updated.avatar_url) || null });
+    } catch (err) {
+      throw new Error(formatUserFacingError(err, 'Не удалось загрузить аватар'));
+    }
   };
 
   const updateMyTag = async (nextTag: string) => {
     if (!token || !currentUser) return;
-    const updated = await apiRequest<ApiUser>('/me/tag', {
-      method: 'PUT',
-      body: JSON.stringify({ tag: nextTag }),
-    }, token);
-    setCurrentUser((prev) => (prev ? { ...prev, tag: updated.tag } : prev));
+    try {
+      const updated = await apiRequest<ApiUser>('/me/tag', {
+        method: 'PUT',
+        body: JSON.stringify({ tag: nextTag }),
+      }, token);
+      setCurrentUser((prev) => (prev ? { ...prev, tag: updated.tag } : prev));
+    } catch (err) {
+      throw new Error(formatUserFacingError(err, 'Не удалось обновить тег'));
+    }
   };
 
   const uploadTrack = async (file: File): Promise<Song> => {
     if (!token) throw new Error('Нет активной сессии');
     const data = new FormData();
     data.append('file', file);
-    const uploaded = await apiRequest<ApiSong>('/songs/upload', {
-      method: 'POST',
-      body: data,
-    }, token);
-    const nextSong = mapUploadedSongToUiSong(uploaded, file.name);
-    await loadProfileData(token);
-    return nextSong;
+    try {
+      const uploaded = await apiRequest<ApiSong>('/songs/upload', {
+        method: 'POST',
+        body: data,
+      }, token);
+      const nextSong = mapUploadedSongToUiSong(uploaded, file.name);
+      await loadProfileData(token);
+      return nextSong;
+    } catch (err) {
+      throw new Error(formatUserFacingError(err, 'Не удалось загрузить трек'));
+    }
   };
 
   useEffect(() => {
@@ -1068,7 +1132,7 @@ export default function App() {
       await loadFriends(token);
       await refreshProfileStats(token);
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Не удалось добавить друга');
+      setAuthError(formatUserFacingError(err, 'Не удалось добавить друга'));
     }
   };
 
@@ -1175,7 +1239,7 @@ export default function App() {
       setSessionMessages((prev) => [...prev, msg]);
       lastMessageIdRef.current = Math.max(lastMessageIdRef.current, msg.id);
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Не удалось отправить сообщение');
+      setAuthError(formatUserFacingError(err, 'Не удалось отправить сообщение'));
     }
   };
 
@@ -1925,6 +1989,7 @@ function ProfileScreen({
   const trackInputRef = useRef<HTMLInputElement | null>(null);
   const [tagInput, setTagInput] = useState(currentUser.tag || '');
   const [savingTag, setSavingTag] = useState(false);
+  const [avatarUploadError, setAvatarUploadError] = useState('');
   const [tagError, setTagError] = useState('');
   const [uploadingTrack, setUploadingTrack] = useState(false);
   const [trackUploadError, setTrackUploadError] = useState('');
@@ -1944,9 +2009,18 @@ function ProfileScreen({
     try {
       await onUpdateTag(normalized);
     } catch (err) {
-      setTagError(err instanceof Error ? err.message : 'Не удалось обновить тег');
+      setTagError(formatUserFacingError(err, 'Не удалось обновить тег'));
     } finally {
       setSavingTag(false);
+    }
+  };
+
+  const handleAvatarUpload = async (file: File) => {
+    setAvatarUploadError('');
+    try {
+      await onUploadAvatar(file);
+    } catch (err) {
+      setAvatarUploadError(formatUserFacingError(err, 'Не удалось загрузить аватар'));
     }
   };
 
@@ -1956,7 +2030,7 @@ function ProfileScreen({
     try {
       await onUploadTrack(file);
     } catch (err) {
-      setTrackUploadError(err instanceof Error ? err.message : 'Не удалось загрузить трек');
+      setTrackUploadError(formatUserFacingError(err, 'Не удалось загрузить трек'));
     } finally {
       setUploadingTrack(false);
     }
@@ -1982,7 +2056,7 @@ function ProfileScreen({
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (!file) return;
-            void onUploadAvatar(file);
+            void handleAvatarUpload(file);
             e.currentTarget.value = '';
           }}
         />
@@ -2008,6 +2082,7 @@ function ProfileScreen({
             {savingTag ? 'Сохраняем...' : 'Сохранить тег'}
           </button>
         </div>
+        {avatarUploadError && <div className="auth-error" style={{ marginTop: 8 }}>{avatarUploadError}</div>}
         {tagError && <div className="auth-error" style={{ marginTop: 8 }}>{tagError}</div>}
         {trackUploadError && <div className="auth-error" style={{ marginTop: 8 }}>{trackUploadError}</div>}
         <div className="profile-stats">
