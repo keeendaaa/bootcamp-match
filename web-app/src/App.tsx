@@ -199,6 +199,47 @@ const normalizePlayableUrl = (raw?: string | null): string | undefined => {
   return undefined;
 };
 
+const decodePodcastStreamToken = (token: string): string | null => {
+  const normalizedToken = token.replace(/-/g, '+').replace(/_/g, '/');
+  const paddedToken = normalizedToken.padEnd(Math.ceil(normalizedToken.length / 4) * 4, '=');
+  try {
+    return atob(paddedToken);
+  } catch {
+    return null;
+  }
+};
+
+const extractDirectPodcastUrlFromProxy = (rawUrl?: string | null): string | null => {
+  const normalized = normalizePlayableUrl(rawUrl);
+  if (!normalized) return null;
+  try {
+    const parsed = new URL(normalized);
+    const marker = '/podcasts/stream/';
+    const markerIdx = parsed.pathname.indexOf(marker);
+    if (markerIdx < 0) return null;
+    const token = parsed.pathname.slice(markerIdx + marker.length).split('/')[0];
+    if (!token) return null;
+
+    const decoded = decodePodcastStreamToken(token);
+    if (!decoded) return null;
+
+    const encodedUrlMatch = decoded.match(/https?%3A%2F%2F[^\s"']+/i);
+    if (encodedUrlMatch?.[0]) {
+      try {
+        return decodeURIComponent(encodedUrlMatch[0]);
+      } catch {
+        return null;
+      }
+    }
+
+    const plainUrlMatch = decoded.match(/https?:\/\/[^\s"']+/i);
+    if (plainUrlMatch?.[0]) return plainUrlMatch[0];
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 const trackKeyOfSong = (song: Song): string => {
   if (song.streamUrl?.startsWith('/music/stream/')) {
     return song.streamUrl.replace('/music/stream/', 'yt:');
@@ -671,21 +712,33 @@ export default function App() {
         contentType: probe.headers.get('content-type'),
       });
       if (!probe.ok) {
-        const maybeRefreshed = await resolveFreshPodcastSong(playbackSong);
-        if (maybeRefreshed) {
-          playbackSong = maybeRefreshed;
-          streamUrl = resolveStreamUrl(playbackSong);
-          if (streamUrl) {
+        const directFallbackUrl = extractDirectPodcastUrlFromProxy(streamUrl);
+        if (directFallbackUrl) {
+          playbackSong = { ...playbackSong, streamUrl: directFallbackUrl };
+          streamUrl = directFallbackUrl;
+          selectSongInPlayer(playbackSong);
+        } else {
+          const maybeRefreshed = await resolveFreshPodcastSong(playbackSong);
+          if (maybeRefreshed) {
+            playbackSong = maybeRefreshed;
+            streamUrl = resolveStreamUrl(playbackSong);
+            if (!streamUrl) {
+              setPlayerError('Поток недоступен');
+              setIsPlaying(false);
+              return;
+            }
+
+            const refreshedDirectFallbackUrl = extractDirectPodcastUrlFromProxy(streamUrl);
+            if (refreshedDirectFallbackUrl) {
+              playbackSong = { ...playbackSong, streamUrl: refreshedDirectFallbackUrl };
+              streamUrl = refreshedDirectFallbackUrl;
+            }
             selectSongInPlayer(playbackSong);
           } else {
             setPlayerError('Поток недоступен');
             setIsPlaying(false);
             return;
           }
-        } else {
-          setPlayerError('Поток недоступен');
-          setIsPlaying(false);
-          return;
         }
       }
     } catch (err) {
@@ -2104,7 +2157,6 @@ export default function App() {
             onUploadTrack={uploadTrack}
             onUpdateTag={updateMyTag}
             onPlay={(s) => playSong(s)}
-            onEnqueue={enqueueSong}
           />
         )}
       </motion.div>
@@ -2210,7 +2262,6 @@ export default function App() {
               setFriendProfile(null);
               playSong(song, friendProfile);
             }}
-            onEnqueue={enqueueSong}
             onAddSong={addFriendSongToLibrary}
           />
         )}
@@ -2495,7 +2546,6 @@ function FriendProfileModal({
   likedTrackKeys,
   onClose,
   onPlay,
-  onEnqueue,
   onAddSong,
 }: {
   friend: Friend;
@@ -2505,7 +2555,6 @@ function FriendProfileModal({
   likedTrackKeys: Set<string>;
   onClose: () => void;
   onPlay: (song: Song) => void;
-  onEnqueue: (song: Song) => void;
   onAddSong: (song: Song) => Promise<boolean>;
 }) {
   const [savingTrackKey, setSavingTrackKey] = useState<string | null>(null);
@@ -2580,13 +2629,6 @@ function FriendProfileModal({
                     <h4>{song.title}</h4>
                     <p>{song.artist} · {song.duration}</p>
                   </div>
-                  <button
-                    className="icon-btn glass-btn-sm"
-                    onClick={() => onEnqueue(song)}
-                    title="Добавить в очередь"
-                  >
-                    <Plus size={16} />
-                  </button>
                   <button
                     className="profile-avatar-btn friend-save-btn"
                     onClick={() => void handleAddSong(song)}
@@ -3121,7 +3163,6 @@ function DiscoverScreen({
             </button>
           ) : (
             <>
-              <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
               <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
               <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
                 <Play size={14} fill="#fff" />
@@ -3500,7 +3541,6 @@ function ProfileScreen({
   onUploadTrack,
   onUpdateTag,
   onPlay,
-  onEnqueue,
 }: {
   currentUser: ApiUser;
   stats: ApiProfileStats;
@@ -3512,7 +3552,6 @@ function ProfileScreen({
   onUploadTrack: (file: File) => Promise<Song>;
   onUpdateTag: (tag: string) => Promise<void>;
   onPlay: (song: Song) => void;
-  onEnqueue: (song: Song) => void;
 }) {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const trackInputRef = useRef<HTMLInputElement | null>(null);
@@ -3636,12 +3675,6 @@ function ProfileScreen({
           >
             <Heart size={18} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
           </motion.button>
-          <button className="icon-btn glass-btn-sm" onClick={(e) => {
-            e.stopPropagation();
-            onEnqueue(song);
-          }}>
-            <Plus size={16} />
-          </button>
           <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
             e.stopPropagation();
             onPlay(song);
@@ -3656,12 +3689,6 @@ function ProfileScreen({
         <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
           <img src={song.cover} alt="" />
           <div className="trending-info"><h4>{song.title}</h4><p>{song.artist} · {song.duration}</p></div>
-          <button className="icon-btn glass-btn-sm" onClick={(e) => {
-            e.stopPropagation();
-            onEnqueue(song);
-          }}>
-            <Plus size={16} />
-          </button>
           <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
             e.stopPropagation();
             onPlay(song);
@@ -4053,6 +4080,33 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
           )}
         </div>
 
+        {/* ===== INLINE CHAT SECTION ===== */}
+        {listeningWith && sessionActive && (
+          <div className="np-chat-section">
+            <div className="np-chat-header">
+              <img src={listeningWith.avatar} alt="" />
+              <div>
+                <h4>Чат с {listeningWith.name}</h4>
+                <p>Слушаете вместе</p>
+              </div>
+            </div>
+
+            <div className="np-chat-messages">
+              {sessionMessages.map((msg) => (
+                <div key={msg.id} className={`np-chat-bubble ${msg.sender_id === currentUserId ? 'sent' : 'received'}`}>
+                  {msg.text}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(!listeningWith || !sessionActive) && (
+          <div className="np-no-session">
+            <p>Нажмите на трек друга, чтобы слушать вместе</p>
+          </div>
+        )}
+
         <div className="np-queue-section">
           <div className="np-queue-header">
             <h4>Очередь</h4>
@@ -4095,33 +4149,6 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
             })}
           </div>
         </div>
-
-        {/* ===== INLINE CHAT SECTION ===== */}
-        {listeningWith && sessionActive && (
-          <div className="np-chat-section">
-            <div className="np-chat-header">
-              <img src={listeningWith.avatar} alt="" />
-              <div>
-                <h4>Чат с {listeningWith.name}</h4>
-                <p>Слушаете вместе</p>
-              </div>
-            </div>
-
-            <div className="np-chat-messages">
-              {sessionMessages.map((msg) => (
-                <div key={msg.id} className={`np-chat-bubble ${msg.sender_id === currentUserId ? 'sent' : 'received'}`}>
-                  {msg.text}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {(!listeningWith || !sessionActive) && (
-          <div className="np-no-session">
-            <p>Нажмите на трек друга, чтобы слушать вместе</p>
-          </div>
-        )}
       </div>
 
       {/* Fixed chat input at bottom */}
