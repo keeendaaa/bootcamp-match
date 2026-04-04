@@ -1,3 +1,7 @@
+# Match Web App
+
+Веб-приложение продолжает работать как Vite + React + TypeScript, а мобильная сборка делается как WebView-shell через Capacitor. Детали и шаги описаны в [MOBILE.md](./MOBILE.md).
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
