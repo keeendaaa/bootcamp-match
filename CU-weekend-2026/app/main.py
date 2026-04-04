@@ -31,6 +31,7 @@ from .schemas import (
     LikedTrackUpsert,
     LikeToggleResponse,
     MusicSearchItem,
+    PodcastEpisodeItem,
     PodcastSearchItem,
     NowPlayingResponse,
     NowPlayingUpdate,
@@ -395,6 +396,45 @@ def parse_episode_audio(feed_url: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def parse_feed_episodes(feed_url: str, limit: int) -> list[PodcastEpisodeItem]:
+    try:
+        resp = requests.get(feed_url, timeout=15)
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to load podcast feed: {exc}")
+
+    episodes: list[PodcastEpisodeItem] = []
+    for item in root.findall(".//item"):
+        enclosure = item.find("enclosure")
+        if enclosure is None:
+            continue
+        audio_url = enclosure.get("url")
+        if not audio_url:
+            continue
+        if not (audio_url.startswith("http://") or audio_url.startswith("https://")):
+            continue
+
+        episode_title = (item.findtext("title") or "Episode").strip()
+        duration_raw = item.findtext("{http://www.itunes.com/dtds/podcast-1.0.dtd}duration")
+        pub_date = item.findtext("pubDate")
+
+        stream_id = uuid.uuid4().hex
+        PODCAST_STREAM_CACHE[stream_id] = audio_url
+        episodes.append(
+            PodcastEpisodeItem(
+                episode_id=stream_id,
+                title=episode_title,
+                duration=duration_raw.strip() if duration_raw else None,
+                published_at=pub_date.strip() if pub_date else None,
+                stream_url=f"/podcasts/stream/{stream_id}",
+            )
+        )
+        if len(episodes) >= limit:
+            break
+    return episodes
+
+
 @app.get("/music/stream/{video_id}")
 def stream_music(
     video_id: str,
@@ -489,6 +529,33 @@ def search_podcasts(
             break
 
     return items
+
+
+@app.get("/podcasts/{podcast_id}/episodes", response_model=list[PodcastEpisodeItem])
+def podcast_episodes(
+    podcast_id: str,
+    limit: int = Query(default=20, ge=1, le=50),
+) -> list[PodcastEpisodeItem]:
+    lookup_url = f"https://itunes.apple.com/lookup?id={podcast_id}"
+    try:
+        resp = requests.get(lookup_url, timeout=12)
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Podcast lookup failed: {exc}")
+
+    results = payload.get("results") or []
+    if not results:
+        raise HTTPException(status_code=404, detail="Podcast not found")
+
+    feed_url = results[0].get("feedUrl")
+    if not feed_url:
+        raise HTTPException(status_code=404, detail="Podcast feed not found")
+
+    episodes = parse_feed_episodes(feed_url, limit)
+    if not episodes:
+        raise HTTPException(status_code=404, detail="No episodes found")
+    return episodes
 
 
 @app.get("/podcasts/stream/{stream_id}")

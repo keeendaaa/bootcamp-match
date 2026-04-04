@@ -100,6 +100,13 @@ type ApiPodcastSearchItem = {
   source_url?: string | null;
   stream_url?: string | null;
 };
+type ApiPodcastEpisodeItem = {
+  episode_id: string;
+  title: string;
+  duration?: string | null;
+  published_at?: string | null;
+  stream_url: string;
+};
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'https://matchapp.site/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
@@ -2411,17 +2418,55 @@ function DiscoverScreen({
   onPlay: (s: Song, queue?: Song[], index?: number) => void;
   onShare: (s: Song) => void;
 }) {
-  type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string };
+  type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string; podcastId?: string };
   const [mode, setMode] = useState<'tracks' | 'podcasts'>('tracks');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [remoteSongs, setRemoteSongs] = useState<DiscoverItem[]>([]);
   const [hasRemoteLoaded, setHasRemoteLoaded] = useState(false);
+  const [episodesPodcast, setEpisodesPodcast] = useState<DiscoverItem | null>(null);
+  const [episodes, setEpisodes] = useState<Song[]>([]);
+  const [episodesLoading, setEpisodesLoading] = useState(false);
+  const [episodesError, setEpisodesError] = useState('');
 
   useEffect(() => {
     setRemoteSongs([]);
     setHasRemoteLoaded(false);
   }, [mode]);
+
+  const openPodcastEpisodes = async (podcast: DiscoverItem) => {
+    setEpisodesPodcast(podcast);
+    setEpisodes([]);
+    setEpisodesError('');
+    setEpisodesLoading(true);
+    try {
+      const accessToken = isDemoMode ? undefined : token;
+      if (podcast.podcastId) {
+        const response = await apiRequest<ApiPodcastEpisodeItem[]>(
+          `/podcasts/${encodeURIComponent(podcast.podcastId)}/episodes?limit=30`,
+          {},
+          accessToken
+        );
+        const mapped = response.map((ep, idx) => ({
+          id: 9_000_000 + idx,
+          title: trimSongTitle(ep.title),
+          artist: podcast.artist,
+          cover: podcast.cover,
+          duration: ep.duration || ep.published_at || 'Эпизод',
+          streamUrl: ep.stream_url,
+        }));
+        setEpisodes(mapped);
+      } else if (podcast.streamUrl) {
+        setEpisodes([{ ...podcast }]);
+      } else {
+        setEpisodesError('Не удалось получить список выпусков');
+      }
+    } catch (err) {
+      setEpisodesError(formatUserFacingError(err, 'Не удалось загрузить выпуски подкаста'));
+    } finally {
+      setEpisodesLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!token && !isDemoMode) {
@@ -2454,6 +2499,7 @@ function DiscoverScreen({
             streamUrl: item.stream_url || undefined,
             isPodcast: true,
             externalUrl: item.source_url || undefined,
+            podcastId: item.podcast_id,
           }));
         } else {
           const accessToken = isDemoMode ? undefined : token;
@@ -2536,12 +2582,20 @@ function DiscoverScreen({
             src={song.cover}
             alt=""
             onClick={() => {
+              if (song.isPodcast) {
+                void openPodcastEpisodes(song);
+                return;
+              }
               onPlay(song, list, idx);
             }}
           />
           <div
             className="trending-info"
             onClick={() => {
+              if (song.isPodcast) {
+                void openPodcastEpisodes(song);
+                return;
+              }
               onPlay(song, list, idx);
             }}
           >
@@ -2549,7 +2603,7 @@ function DiscoverScreen({
             <p>{song.artist} · {song.duration}</p>
           </div>
           {song.isPodcast ? (
-            <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
+            <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => void openPodcastEpisodes(song)} title="Выбрать выпуск">
               <Play size={14} fill="#fff" />
             </button>
           ) : (
@@ -2570,6 +2624,55 @@ function DiscoverScreen({
           )}
         </div>
       ))}
+      <AnimatePresence>
+        {episodesPodcast && (
+          <motion.div
+            className="share-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setEpisodesPodcast(null)}
+          >
+            <motion.div
+              className="share-sheet podcast-episodes-sheet glass-panel"
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', bounce: 0.12 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="share-header">
+                <h3>Выпуски: {episodesPodcast.title}</h3>
+                <button className="icon-btn glass-btn-sm" onClick={() => setEpisodesPodcast(null)}><X size={18} /></button>
+              </div>
+              {episodesLoading && <div className="search-status">Загружаем выпуски...</div>}
+              {!episodesLoading && episodesError && <div className="auth-error">{episodesError}</div>}
+              {!episodesLoading && !episodesError && episodes.length === 0 && (
+                <div className="search-status">Доступных выпусков пока нет</div>
+              )}
+              {!episodesLoading && episodes.map((episode, epIdx) => (
+                <div
+                  className="trending-item podcast-episode-item"
+                  key={`${episode.id}-${epIdx}`}
+                  onClick={() => {
+                    onPlay(episode, episodes, epIdx);
+                    setEpisodesPodcast(null);
+                  }}
+                >
+                  <img src={episode.cover} alt="" />
+                  <div className="trending-info">
+                    <h4>{episode.title}</h4>
+                    <p>{episode.artist} · {episode.duration}</p>
+                  </div>
+                  <button className="play-btn-sm" style={{ width: 32, height: 32 }}>
+                    <Play size={14} fill="#fff" />
+                  </button>
+                </div>
+              ))}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 }

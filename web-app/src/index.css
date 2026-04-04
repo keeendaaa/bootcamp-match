@@ -1066,6 +1066,11 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   color: #142038;
 }
 .friend-profile-sheet { max-height: 88%; }
+.podcast-episodes-sheet { max-height: 86%; }
+.podcast-episode-item {
+  padding-left: 0;
+  padding-right: 0;
+}
 
 .share-header {
   display: flex;
