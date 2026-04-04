@@ -847,14 +847,16 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   box-shadow: 0 4px 16px var(--orange-glow);
 }
 
-.np-actions { display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; }
+.np-actions { display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
 
 .np-chip {
-  height: 36px; padding: 0 18px; border-radius: var(--radius-pill);
+  min-height: 36px; padding: 8px 16px; border-radius: var(--radius-pill);
   background: rgba(255,255,255,0.08);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255,255,255,0.1);
-  color: #fff; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600;
+  color: #fff; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; font-weight: 600;
+  white-space: nowrap;
+  line-height: 1;
 }
 .np-chip.liked {
   border-color: rgba(255, 167, 69, 0.6);
