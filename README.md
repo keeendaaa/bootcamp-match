@@ -53,6 +53,24 @@
   - синхронизация позиции
   - чат внутри сессии
 
+## Скриншоты
+
+### Home Screen
+
+![Home Screen](web-app/readme-photos/home-screen.png)
+
+### Friends / Feed
+
+![Friends Feed](web-app/readme-photos/image.png)
+
+### Discover
+
+![Discover](web-app/readme-photos/screen-opens.png)
+
+### Profile
+
+![Profile](web-app/readme-photos/profile.png)
+
 ## Быстрый старт
 
 ### 1) Фронтенд
