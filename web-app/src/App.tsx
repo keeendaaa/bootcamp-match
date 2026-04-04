@@ -158,7 +158,8 @@ const normalizeBackendFileUrl = (raw?: string | null): string | undefined => {
 
 const normalizePlayableUrl = (raw?: string | null): string | undefined => {
   if (!raw) return undefined;
-  if (raw.startsWith('/music/stream/')) return raw;
+  if (raw.startsWith('/music/stream/')) return `${API_BASE}${raw}`;
+  if (raw.startsWith('/api/music/stream/')) return `${API_ORIGIN}${raw}`;
 
   const normalizedFileUrl = normalizeBackendFileUrl(raw);
   if (normalizedFileUrl && normalizedFileUrl !== raw) return normalizedFileUrl;
@@ -166,7 +167,8 @@ const normalizePlayableUrl = (raw?: string | null): string | undefined => {
   try {
     const parsed = new URL(raw, API_ORIGIN);
     const pathWithSearch = `${parsed.pathname}${parsed.search}`;
-    if (parsed.pathname.startsWith('/music/stream/')) return pathWithSearch;
+    if (parsed.pathname.startsWith('/music/stream/')) return `${API_BASE}${pathWithSearch}`;
+    if (parsed.pathname.startsWith('/api/music/stream/')) return `${API_ORIGIN}${pathWithSearch}`;
     if (/^https?:$/i.test(parsed.protocol)) return raw;
   } catch {
     // noop
