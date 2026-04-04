@@ -275,20 +275,22 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 
 .auth-socials {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 12px;
+  margin-top: 8px;
+  justify-content: center;
 }
 
 .auth-social-btn {
-  height: 46px;
-  border-radius: var(--radius-pill);
-  font-size: 15px;
-  font-weight: 700;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
   border: 1px solid rgba(19, 28, 45, 0.08);
   background: #fff;
   color: #131c2d;
   box-shadow: var(--shadow-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .auth-social-btn.google {
