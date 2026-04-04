@@ -68,6 +68,21 @@ def create_tag_seed(name: str, email: str) -> str:
     return base
 
 
+def build_uploaded_song_filename(filename: str) -> str:
+    ext = os.path.splitext(filename)[1].lower()
+    clean_ext = re.sub(r"[^a-z0-9.]+", "", ext)
+    if clean_ext and not clean_ext.startswith("."):
+        clean_ext = f".{clean_ext}"
+    return f"track-{uuid.uuid4().hex}{clean_ext}"
+
+
+def title_from_filename(filename: str) -> str | None:
+    title = os.path.splitext(os.path.basename(filename))[0].strip()
+    if not title:
+        return None
+    return title[:255]
+
+
 def ensure_unique_tag(db: Session, base: str, exclude_user_id: int | None = None) -> str:
     cleaned = normalize_tag(base) or "user"
     candidate = cleaned
@@ -719,7 +734,6 @@ def add_song(
 
 @app.post("/songs/upload", response_model=SongPublic)
 def upload_song(
-    request: Request,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -727,16 +741,22 @@ def upload_song(
     if not file.filename:
         raise HTTPException(status_code=400, detail="File name is required")
 
-    filename = os.path.basename(file.filename)
-    if not filename:
+    original_filename = os.path.basename(file.filename)
+    if not original_filename:
         raise HTTPException(status_code=400, detail="Invalid file name")
-    file_path = os.path.join(UPLOAD_DIR, filename)
+    stored_filename = build_uploaded_song_filename(original_filename)
+    file_path = os.path.join(UPLOAD_DIR, stored_filename)
 
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    url = f"{request.base_url}files/{filename}"
-    song = Song(user_id=current_user.id, url=url, filename=filename)
+    url = f"/files/{stored_filename}"
+    song = Song(
+        user_id=current_user.id,
+        url=url,
+        title=title_from_filename(original_filename),
+        filename=stored_filename,
+    )
     db.add(song)
     db.commit()
     db.refresh(song)
