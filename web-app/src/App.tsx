@@ -2454,42 +2454,42 @@ function AuthScreen({
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
             onKeyDown={(e) => { if (e.key === 'Enter') void submit(); }}
           />
+          <div className="auth-divider"><span>или войти через</span></div>
+          <div className="auth-socials">
+            <button
+              className="auth-social-btn google"
+              type="button"
+              onClick={() => onStartSocialAuth('google')}
+              disabled={submitting}
+              aria-label="Войти через Google"
+              title="Google"
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M22 12.24c0-.76-.07-1.49-.2-2.2H12v4.15h5.6a4.8 4.8 0 0 1-2.08 3.15v2.62h3.37c1.97-1.81 3.11-4.48 3.11-7.72Z" fill="#4285F4" />
+                <path d="M12 22c2.81 0 5.17-.93 6.89-2.52l-3.37-2.62c-.93.63-2.13 1-3.52 1-2.7 0-4.99-1.82-5.81-4.26H2.7v2.71A10 10 0 0 0 12 22Z" fill="#34A853" />
+                <path d="M6.19 13.6A6 6 0 0 1 5.86 12c0-.56.12-1.1.33-1.6V7.68H2.7A10 10 0 0 0 2 12c0 1.62.39 3.16 1.09 4.4l3.1-2.8Z" fill="#FBBC04" />
+                <path d="M12 6.14c1.53 0 2.9.53 3.98 1.55l2.98-2.98A10 10 0 0 0 12 2a10 10 0 0 0-9.3 5.68l3.49 2.72c.82-2.44 3.11-4.26 5.81-4.26Z" fill="#EA4335" />
+              </svg>
+            </button>
+            <button
+              className="auth-social-btn yandex"
+              type="button"
+              onClick={() => onStartSocialAuth('yandex')}
+              disabled={submitting}
+              aria-label="Войти через Яндекс ID"
+              title="Яндекс ID"
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="0" y="0" width="24" height="24" rx="7" fill="#FC3F1D" />
+                <path d="M13.73 6h-2.28c-2.42 0-4.1 1.39-4.1 3.52 0 1.52.84 2.64 2.47 3.34l-2.7 5.14h2.5l2.57-4.93h.12V18H15V6h-1.27Zm-1.54 5.1c-1.37 0-2.1-.63-2.1-1.66 0-.97.72-1.58 2.03-1.58h.66v3.24h-.59Z" fill="#fff" />
+              </svg>
+            </button>
+          </div>
           <button className="auth-submit" onClick={() => void submit()} disabled={submitting}>
             {submitting ? 'Подключение...' : mode === 'login' ? 'Войти' : 'Создать аккаунт'}
           </button>
           <button className="auth-submit" type="button" onClick={onDemo} disabled={submitting}>
             Демо-режим без входа
-          </button>
-        </div>
-        <div className="auth-divider"><span>или войти через</span></div>
-        <div className="auth-socials">
-          <button
-            className="auth-social-btn google"
-            type="button"
-            onClick={() => onStartSocialAuth('google')}
-            disabled={submitting}
-            aria-label="Войти через Google"
-            title="Google"
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M22 12.24c0-.76-.07-1.49-.2-2.2H12v4.15h5.6a4.8 4.8 0 0 1-2.08 3.15v2.62h3.37c1.97-1.81 3.11-4.48 3.11-7.72Z" fill="#4285F4" />
-              <path d="M12 22c2.81 0 5.17-.93 6.89-2.52l-3.37-2.62c-.93.63-2.13 1-3.52 1-2.7 0-4.99-1.82-5.81-4.26H2.7v2.71A10 10 0 0 0 12 22Z" fill="#34A853" />
-              <path d="M6.19 13.6A6 6 0 0 1 5.86 12c0-.56.12-1.1.33-1.6V7.68H2.7A10 10 0 0 0 2 12c0 1.62.39 3.16 1.09 4.4l3.1-2.8Z" fill="#FBBC04" />
-              <path d="M12 6.14c1.53 0 2.9.53 3.98 1.55l2.98-2.98A10 10 0 0 0 12 2a10 10 0 0 0-9.3 5.68l3.49 2.72c.82-2.44 3.11-4.26 5.81-4.26Z" fill="#EA4335" />
-            </svg>
-          </button>
-          <button
-            className="auth-social-btn yandex"
-            type="button"
-            onClick={() => onStartSocialAuth('yandex')}
-            disabled={submitting}
-            aria-label="Войти через Яндекс ID"
-            title="Яндекс ID"
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="0" y="0" width="24" height="24" rx="7" fill="#FC3F1D" />
-              <path d="M13.73 6h-2.28c-2.42 0-4.1 1.39-4.1 3.52 0 1.52.84 2.64 2.47 3.34l-2.7 5.14h2.5l2.57-4.93h.12V18H15V6h-1.27Zm-1.54 5.1c-1.37 0-2.1-.63-2.1-1.66 0-.97.72-1.58 2.03-1.58h.66v3.24h-.59Z" fill="#fff" />
-            </svg>
           </button>
         </div>
 
