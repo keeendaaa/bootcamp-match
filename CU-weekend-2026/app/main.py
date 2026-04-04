@@ -12,6 +12,7 @@ import jwt
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 import requests
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 import yt_dlp
 from ytmusicapi import YTMusic
@@ -32,6 +33,7 @@ from .schemas import (
     LikedTrackPublic,
     LikedTrackUpsert,
     LikeToggleResponse,
+    ReadStateResponse,
     MusicSearchItem,
     PodcastEpisodeItem,
     PodcastSearchItem,
@@ -847,7 +849,11 @@ def list_direct_threads(
         )
         unread = (
             db.query(DirectMessage)
-            .filter(DirectMessage.sender_id == friend.id, DirectMessage.recipient_id == current_user.id)
+            .filter(
+                DirectMessage.sender_id == friend.id,
+                DirectMessage.recipient_id == current_user.id,
+                DirectMessage.read_at.is_(None),
+            )
             .count()
         )
         threads.append(
@@ -886,7 +892,42 @@ def list_direct_messages(
         .order_by(DirectMessage.id.asc())
         .all()
     )
+    unread_ids = [
+        message.id
+        for message in messages
+        if message.sender_id == friend_id
+        and message.recipient_id == current_user.id
+        and message.read_at is None
+    ]
+    if unread_ids:
+        db.query(DirectMessage).filter(DirectMessage.id.in_(unread_ids)).update(
+            {DirectMessage.read_at: func.now()},
+            synchronize_session=False,
+        )
+        db.commit()
     return [direct_message_to_public(message) for message in messages]
+
+
+@app.post("/chats/{friend_id}/read", response_model=ReadStateResponse)
+def mark_direct_thread_read(
+    friend_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ReadStateResponse:
+    if not is_friend(db, current_user.id, friend_id):
+        raise HTTPException(status_code=403, detail="Not friends")
+
+    updated = (
+        db.query(DirectMessage)
+        .filter(
+            DirectMessage.sender_id == friend_id,
+            DirectMessage.recipient_id == current_user.id,
+            DirectMessage.read_at.is_(None),
+        )
+        .update({DirectMessage.read_at: func.now()}, synchronize_session=False)
+    )
+    db.commit()
+    return ReadStateResponse(ok=True, updated=updated or 0)
 
 
 @app.post("/chats/{friend_id}/messages", response_model=DirectMessagePublic)

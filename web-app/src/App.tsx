@@ -556,6 +556,7 @@ export default function App() {
   const clearNowPlayingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const friendsPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const friendsLoadInFlightRef = useRef(false);
+  const chatThreadsRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastMessageIdRef = useRef(0);
   const handledInviteIdsRef = useRef<Set<number>>(new Set());
   const suppressSessionSyncRef = useRef(false);
@@ -1196,11 +1197,36 @@ export default function App() {
     );
   };
 
+  const scheduleChatThreadsRefresh = () => {
+    if (isDemoMode) return;
+    const accessToken = tokenRef.current || token;
+    if (!accessToken) return;
+    if (chatThreadsRefreshTimerRef.current) {
+      clearTimeout(chatThreadsRefreshTimerRef.current);
+    }
+    chatThreadsRefreshTimerRef.current = setTimeout(() => {
+      chatThreadsRefreshTimerRef.current = null;
+      void loadChatThreads(accessToken);
+    }, 500);
+  };
+
+  const markThreadRead = async (friendId: number) => {
+    if (isDemoMode) return;
+    if (!token) return;
+    try {
+      await apiRequest<{ ok: boolean; updated: number }>(`/chats/${friendId}/read`, { method: 'POST' }, token);
+      scheduleChatThreadsRefresh();
+    } catch {
+      // noop: optimistic UI already cleared
+    }
+  };
+
   const openChatThread = (thread: ChatThread) => {
     setOpenChat({ ...thread, unread: 0 });
     setChatThreads((prev) =>
       prev.map((item) => (item.friend.id === thread.friend.id ? { ...item, unread: 0 } : item))
     );
+    void markThreadRead(thread.friend.id);
   };
 
   const loadProfileData = async (accessToken: string) => {

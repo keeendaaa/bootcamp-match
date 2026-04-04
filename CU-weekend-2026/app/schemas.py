@@ -198,3 +198,8 @@ class DirectThreadPublic(BaseModel):
     friend: UserPublic
     last_message: DirectMessagePublic | None = None
     unread: int = 0
+
+
+class ReadStateResponse(BaseModel):
+    ok: bool = True
+    updated: int = 0

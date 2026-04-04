@@ -109,3 +109,4 @@ class DirectMessage(Base):
     song_stream_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     song_duration: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
