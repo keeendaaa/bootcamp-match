@@ -8,7 +8,7 @@ import {
   Plus, ChevronRight,
   Mic, MicOff, X
 } from 'lucide-react';
-import { SONGS, FRIENDS, CHAT_THREADS, TRENDING_TAGS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
+import { SONGS, PODCASTS, FRIENDS, CHAT_THREADS, TRENDING_TAGS, PODCAST_TAGS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
 import { listenForAppUrls } from './mobile/capacitor';
 import {
   clearHandledWidgetParams,
@@ -2398,10 +2398,16 @@ function DiscoverScreen({
   onPlay: (s: Song, queue?: Song[], index?: number) => void;
   onShare: (s: Song) => void;
 }) {
+  const [mode, setMode] = useState<'tracks' | 'podcasts'>('tracks');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [remoteSongs, setRemoteSongs] = useState<Song[]>([]);
   const [hasRemoteLoaded, setHasRemoteLoaded] = useState(false);
+
+  useEffect(() => {
+    setRemoteSongs([]);
+    setHasRemoteLoaded(false);
+  }, [mode]);
 
   useEffect(() => {
     if (!token && !isDemoMode) {
@@ -2411,7 +2417,7 @@ function DiscoverScreen({
       return;
     }
     const trimmed = query.trim();
-    const effectiveQuery = trimmed.length >= 2 ? trimmed : 'top hits';
+    const effectiveQuery = trimmed.length >= 2 ? trimmed : mode === 'podcasts' ? 'top podcasts' : 'top hits';
 
     let cancelled = false;
     const timer = setTimeout(async () => {
@@ -2424,11 +2430,12 @@ function DiscoverScreen({
           accessToken
         );
         if (cancelled) return;
+        const fallbackCovers = mode === 'podcasts' ? PODCASTS : SONGS;
         const mapped: Song[] = results.map((item, idx) => ({
-          id: 2_000_000 + idx,
+          id: (mode === 'podcasts' ? 3_000_000 : 2_000_000) + idx,
           title: trimSongTitle(item.title),
           artist: item.artist,
-          cover: item.cover_url || SONGS[idx % SONGS.length].cover,
+          cover: item.cover_url || fallbackCovers[idx % fallbackCovers.length].cover,
           duration: item.duration || '—',
           streamUrl: item.stream_url || undefined,
         }));
@@ -2452,32 +2459,38 @@ function DiscoverScreen({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, token, isDemoMode]);
+  }, [query, token, isDemoMode, mode]);
 
-  const list = hasRemoteLoaded ? remoteSongs : SONGS;
+  const fallbackList = mode === 'podcasts' ? PODCASTS : SONGS;
+  const list = hasRemoteLoaded ? remoteSongs : fallbackList;
+  const tags = mode === 'podcasts' ? PODCAST_TAGS : TRENDING_TAGS;
 
   return (
     <>
+      <div className="tab-pills" style={{ marginBottom: 8 }}>
+        <button className={`tab-pill ${mode === 'tracks' ? 'active' : ''}`} onClick={() => setMode('tracks')}>Треки</button>
+        <button className={`tab-pill ${mode === 'podcasts' ? 'active' : ''}`} onClick={() => setMode('podcasts')}>Подкасты</button>
+      </div>
       <div className="search-bar glass-inset">
         <Search size={18} />
         <input
-          placeholder="Поиск треков и артистов..."
+          placeholder={mode === 'podcasts' ? 'Поиск подкастов...' : 'Поиск треков и артистов...'}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
       </div>
-      {loading && <div className="search-status">Ищем треки в YouTube Music...</div>}
+      {loading && <div className="search-status">{mode === 'podcasts' ? 'Ищем подкасты...' : 'Ищем треки в YouTube Music...'}</div>}
       {!loading && query.trim().length < 2 && list.length > 0 && (
-        <div className="search-status">Популярное из YouTube Music</div>
+        <div className="search-status">{mode === 'podcasts' ? 'Популярные подкасты' : 'Популярное из YouTube Music'}</div>
       )}
       {!loading && list.length === 0 && (
         <div className="search-status">Ничего не найдено</div>
       )}
       <div className="tag-row">
-        {TRENDING_TAGS.map(tag => (<button className="tag-chip" key={tag}>{tag}</button>))}
+        {tags.map(tag => (<button className="tag-chip" key={tag}>{tag}</button>))}
       </div>
       <div className="section-header">
-        <h3 className="section-title">В тренде</h3>
+        <h3 className="section-title">{mode === 'podcasts' ? 'Популярные подкасты' : 'В тренде'}</h3>
         <button className="section-more">Ещё <ChevronRight size={16} /></button>
       </div>
       {list.map((song, idx) => (
