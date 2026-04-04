@@ -99,8 +99,6 @@ const ONBOARDING_SEEN_KEY = 'match_onboarding_seen';
 const DEMO_TOKEN = '__MATCH_DEMO__';
 const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksandr.jpg', '/avatars/galya.jpg'];
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
-const FRIENDS_POLL_INTERVAL_MS = 1_000;
-const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 1_000;
 const FRIENDS_POLL_INTERVAL_MS = 12_000;
 const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 30_000;
 const DEMO_USER: ApiUser = { id: 0, name: 'Demo User', email: 'demo@match.app', tag: 'demo', avatar_url: '/avatars/user.jpg' };
@@ -1558,6 +1556,7 @@ export default function App() {
         {tab === 'discover' && (
           <DiscoverScreen
             token={token}
+            isDemoMode={isDemoMode}
             likedTrackKeys={likedTrackKeys}
             onToggleLike={toggleLike}
             onPlay={(s, queue, index) => playSong(s, undefined, queue, index)}
@@ -2078,12 +2077,14 @@ function FriendsScreen({
 /* ========== DISCOVER ========== */
 function DiscoverScreen({
   token,
+  isDemoMode,
   likedTrackKeys,
   onToggleLike,
   onPlay,
   onShare,
 }: {
   token: string;
+  isDemoMode: boolean;
   likedTrackKeys: Set<string>;
   onToggleLike: (song: Song) => Promise<boolean>;
   onPlay: (s: Song, queue?: Song[], index?: number) => void;
@@ -2095,7 +2096,12 @@ function DiscoverScreen({
   const [hasRemoteLoaded, setHasRemoteLoaded] = useState(false);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || isDemoMode) {
+      setLoading(false);
+      setRemoteSongs([]);
+      setHasRemoteLoaded(false);
+      return;
+    }
     const trimmed = query.trim();
     const effectiveQuery = trimmed.length >= 2 ? trimmed : 'top hits';
 
@@ -2120,8 +2126,14 @@ function DiscoverScreen({
         setRemoteSongs(mapped);
         setHasRemoteLoaded(true);
       } catch (err) {
-        console.warn('YTM search failed', err);
-        if (!cancelled) setRemoteSongs([]);
+        if (!cancelled) {
+          setRemoteSongs([]);
+          setHasRemoteLoaded(false);
+        }
+        const msg = err instanceof Error ? err.message : '';
+        if (!msg.includes('401')) {
+          console.warn('YTM search failed', err);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -2131,7 +2143,7 @@ function DiscoverScreen({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, token]);
+  }, [query, token, isDemoMode]);
 
   const list = hasRemoteLoaded ? remoteSongs : SONGS;
 
