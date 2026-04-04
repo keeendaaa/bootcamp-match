@@ -150,7 +150,8 @@ const normalizeBackendFileUrl = (raw?: string | null): string | undefined => {
 
 const normalizePlayableUrl = (raw?: string | null): string | undefined => {
   if (!raw) return undefined;
-  if (raw.startsWith('/music/stream/')) return raw;
+  if (raw.startsWith('/music/stream/')) return `${API_BASE}${raw}`;
+  if (raw.startsWith('/api/music/stream/')) return `${API_ORIGIN}${raw}`;
 
   const normalizedFileUrl = normalizeBackendFileUrl(raw);
   if (normalizedFileUrl && normalizedFileUrl !== raw) return normalizedFileUrl;
@@ -158,7 +159,8 @@ const normalizePlayableUrl = (raw?: string | null): string | undefined => {
   try {
     const parsed = new URL(raw, API_ORIGIN);
     const pathWithSearch = `${parsed.pathname}${parsed.search}`;
-    if (parsed.pathname.startsWith('/music/stream/')) return pathWithSearch;
+    if (parsed.pathname.startsWith('/music/stream/')) return `${API_BASE}${pathWithSearch}`;
+    if (parsed.pathname.startsWith('/api/music/stream/')) return `${API_ORIGIN}${pathWithSearch}`;
     if (/^https?:$/i.test(parsed.protocol)) return raw;
   } catch {
     // noop
@@ -522,7 +524,7 @@ export default function App() {
         contentType: probe.headers.get('content-type'),
       });
       if (!probe.ok) {
-        setPlayerError(`Поток недоступен (${probe.status})`);
+        setPlayerError('Поток недоступен');
       }
     } catch (err) {
       debugLog('stream probe failed', err);
@@ -543,7 +545,7 @@ export default function App() {
     } catch (err) {
       const details = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
       debugLog('audio.play failed', details);
-      setPlayerError(`Не удалось начать воспроизведение (${details})`);
+      setPlayerError('Не удалось начать воспроизведение');
       setIsPlaying(false);
     }
   };
@@ -647,6 +649,7 @@ export default function App() {
 
   const clearNowPlayingOnBackend = async () => {
     const accessToken = tokenRef.current;
+    if (accessToken === DEMO_TOKEN) return;
     if (!accessToken) return;
     try {
       await apiRequest<{ ok: boolean }>('/me/now-playing', { method: 'DELETE' }, accessToken);
@@ -657,6 +660,7 @@ export default function App() {
 
   const touchNowPlayingOnBackend = async () => {
     const accessToken = tokenRef.current;
+    if (accessToken === DEMO_TOKEN) return;
     if (!accessToken) return;
     try {
       await apiRequest<{ ok: boolean }>('/me/now-playing/heartbeat', { method: 'POST' }, accessToken);
@@ -804,7 +808,7 @@ export default function App() {
         readyState: audio.readyState,
         src: audio.src,
       });
-      setPlayerError(`Ошибка аудио: ${label}`);
+      setPlayerError('Не удалось воспроизвести трек');
     };
     const onStalled = () => debugLog('audio event: stalled', { currentTime: audio.currentTime, src: audio.src });
     const onWaiting = () => debugLog('audio event: waiting', { currentTime: audio.currentTime });
@@ -2394,7 +2398,7 @@ function DiscoverScreen({
   const [hasRemoteLoaded, setHasRemoteLoaded] = useState(false);
 
   useEffect(() => {
-    if (!token || isDemoMode) {
+    if (!token && !isDemoMode) {
       setLoading(false);
       setRemoteSongs([]);
       setHasRemoteLoaded(false);
@@ -2407,10 +2411,11 @@ function DiscoverScreen({
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
+        const accessToken = isDemoMode ? undefined : token;
         const results = await apiRequest<ApiMusicSearchItem[]>(
           `/music/search?q=${encodeURIComponent(effectiveQuery)}&limit=20`,
           {},
-          token
+          accessToken
         );
         if (cancelled) return;
         const mapped: Song[] = results.map((item, idx) => ({

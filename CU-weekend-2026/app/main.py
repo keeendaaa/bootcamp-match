@@ -240,7 +240,6 @@ async def voice_signal_ws(websocket: WebSocket, session_id: int, token: str = Qu
 def search_music(
     q: str = Query(min_length=2, max_length=120),
     limit: int = Query(default=10, ge=1, le=20),
-    _: User = Depends(get_current_user),
 ) -> list[MusicSearchItem]:
     results = ytmusic.search(q, filter="songs", limit=limit) or []
     items: list[MusicSearchItem] = []
