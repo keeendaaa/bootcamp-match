@@ -1708,7 +1708,13 @@ export default function App() {
     <>
       <AppHeader tab={tab} currentUser={currentUser} onLogout={clearSession} />
 
-      <div className="screen-scroll" key={tab}>
+      <motion.div
+        className="screen-scroll"
+        key={tab}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.24, ease: 'easeOut' }}
+      >
         {tab === 'friends' && (
           <FriendsScreen
             friends={friends}
@@ -1745,7 +1751,7 @@ export default function App() {
             onPlay={(s) => playSong(s)}
           />
         )}
-      </div>
+      </motion.div>
 
       <div className="mini-player-area">
         <motion.div className="mini-player" onClick={() => setNpOpen(true)} whileTap={{ scale: 0.97 }}>
@@ -2987,19 +2993,46 @@ function BottomNav({ tab, onChangeTab }: { tab: Tab; onChangeTab: (t: Tab) => vo
   ];
   return (
     <nav className="bottom-nav">
-      {items.map((item) => {
+      {items.map((item, idx) => {
         const Icon = item.icon;
         const active = tab === item.id;
         return (
-          <button
+          <motion.button
             key={item.id}
             type="button"
             className={`nav-item ${active ? 'active' : ''}`}
             onClick={() => onChangeTab(item.id)}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: active ? -2 : 0, scale: active ? 1.02 : 1 }}
+            transition={{
+              opacity: { duration: 0.2, delay: idx * 0.04 },
+              y: { type: 'spring', stiffness: 320, damping: 24 },
+              scale: { type: 'spring', stiffness: 320, damping: 24 },
+            }}
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.95 }}
           >
-            <div className="nav-icon-wrap"><Icon size={22} strokeWidth={active ? 2.4 : 2} /></div>
-            <span>{item.label}</span>
-          </button>
+            {active && (
+              <motion.div
+                className="nav-active-bg"
+                layoutId="nav-active-bg"
+                transition={{ type: 'spring', stiffness: 360, damping: 30 }}
+              />
+            )}
+            <motion.div
+              className="nav-icon-wrap"
+              animate={{ scale: active ? 1.08 : 1, rotate: active ? 2 : 0 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 22 }}
+            >
+              <Icon size={22} strokeWidth={active ? 2.4 : 2} />
+            </motion.div>
+            <motion.span
+              animate={{ y: active ? -1 : 0, opacity: active ? 1 : 0.86 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 24 }}
+            >
+              {item.label}
+            </motion.span>
+          </motion.button>
         );
       })}
     </nav>
