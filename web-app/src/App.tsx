@@ -11,9 +11,15 @@ import {
 import { SONGS, PODCASTS, FRIENDS, CHAT_THREADS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
 import { getNativePlatform, isNativeApp, listenForAppUrls } from './mobile/capacitor';
 import {
+  buildNativeSocialCallbackTarget,
+  buildSocialCallbackTarget,
+  clearHandledAuthParams,
   clearHandledWidgetParams,
   getInitialWidgetOpenRequest,
+  getInitialAuthCallbackResult,
+  parseAuthCallbackResult,
   parseWidgetOpenRequest,
+  type AuthCallbackResult,
   type WidgetOpenRequest,
 } from './mobile/deepLinks';
 import { NowPlayingDetector, type DeviceNowPlayingTrack } from './mobile/nowPlayingDetector';
@@ -82,6 +88,7 @@ type ApiDirectThread = {
   unread: number;
 };
 type AuthMode = 'login' | 'register';
+type SocialProvider = 'google' | 'yandex';
 type RepeatMode = 'off' | 'all' | 'one';
 type ApiMusicSearchItem = {
   video_id: string;
@@ -523,6 +530,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => !localStorage.getItem(ONBOARDING_SEEN_KEY));
   const [authError, setAuthError] = useState('');
+  const [authCallback, setAuthCallback] = useState<AuthCallbackResult | null>(() => getInitialAuthCallbackResult());
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [playerError, setPlayerError] = useState('');
   const [profileStats, setProfileStats] = useState<ApiProfileStats>({ friends: 0, tracks: 0, likes: 0, playlists: 0 });
@@ -964,6 +972,12 @@ export default function App() {
     setShowOnboarding(false);
   };
 
+  const startSocialAuth = (provider: SocialProvider) => {
+    const target = isNativeApp() ? buildNativeSocialCallbackTarget() : buildSocialCallbackTarget();
+    const startUrl = `${API_BASE}/auth/${provider}/start?origin=${encodeURIComponent(target)}`;
+    window.location.assign(startUrl);
+  };
+
   useEffect(() => {
     const audio = new Audio();
     audio.preload = 'none';
@@ -1098,6 +1112,11 @@ export default function App() {
   useEffect(() => {
     let handle: { remove: () => Promise<void> } | null = null;
     void listenForAppUrls((url) => {
+      const authResult = parseAuthCallbackResult(url);
+      if (authResult) {
+        setAuthCallback(authResult);
+        return;
+      }
       const request = parseWidgetOpenRequest(url);
       if (request) setPendingWidgetRequest(request);
     }).then((listener) => {
@@ -1107,6 +1126,27 @@ export default function App() {
       void handle?.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (!authCallback) return;
+    if (authCallback.error) {
+      setAuthError(decodeURIComponent(authCallback.error));
+      setAuthCallback(null);
+      clearHandledAuthParams();
+      return;
+    }
+    if (!authCallback.accessToken) return;
+
+    localStorage.setItem(AUTH_STORAGE_KEY, authCallback.accessToken);
+    localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
+    setShowOnboarding(false);
+    setAuthError('');
+    setCurrentUser(null);
+    setAuthReady(false);
+    setToken(authCallback.accessToken);
+    setAuthCallback(null);
+    clearHandledAuthParams();
+  }, [authCallback]);
 
   const loadFriends = async (accessToken: string, options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -2002,6 +2042,7 @@ export default function App() {
       <AuthScreen
         error={authError}
         onSubmit={submitAuth}
+        onStartSocialAuth={startSocialAuth}
         onDemo={enterDemoMode}
       />
     );
@@ -2268,10 +2309,12 @@ function OnboardingScreen({ onContinue, onDemo }: { onContinue: () => void; onDe
 /* ========== AUTH ========== */
 function AuthScreen({
   onSubmit,
+  onStartSocialAuth,
   onDemo,
   error,
 }: {
   onSubmit: (mode: AuthMode, email: string, password: string, name?: string) => Promise<void>;
+  onStartSocialAuth: (provider: SocialProvider) => void;
   onDemo: () => void;
   error: string;
 }) {
@@ -2302,7 +2345,18 @@ function AuthScreen({
       >
         <img src="/logo.png" alt="MATCH" className="auth-logo" />
         <h2>{mode === 'login' ? 'Вход' : 'Регистрация'}</h2>
-        <p>Войдите по почте и паролю</p>
+        <p>Войдите по почте, Google или Яндекс ID</p>
+
+        <div className="auth-socials">
+          <button className="auth-social-btn google" type="button" onClick={() => onStartSocialAuth('google')} disabled={submitting}>
+            Войти через Google
+          </button>
+          <button className="auth-social-btn yandex" type="button" onClick={() => onStartSocialAuth('yandex')} disabled={submitting}>
+            Войти через Яндекс ID
+          </button>
+        </div>
+
+        <div className="auth-divider"><span>или</span></div>
 
         <div className="auth-tabs">
           <button className={`auth-tab ${mode === 'login' ? 'active' : ''}`} onClick={() => setMode('login')}>Вход</button>
@@ -2752,30 +2806,8 @@ function DiscoverScreen({
   onEnqueue: (song: Song) => void;
   onShare: (s: Song) => void;
 }) {
-<<<<<<< HEAD
-  type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string };
-  const [section, setSection] = useState<'music' | 'podcasts'>('music');
-=======
   type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string; podcastId?: string };
-  const TRACK_TAG_QUERY_MAP: Record<string, string> = {
-    'Поп': 'pop hits',
-    'Рок': 'rock hits',
-    'Хип-хоп': 'hip hop',
-    'R&B': 'r&b',
-    'Электроника': 'electronic',
-    'Инди': 'indie',
-  };
-  const PODCAST_TAG_QUERY_MAP: Record<string, string> = {
-    'Технологии': 'technology podcast',
-    'Стартапы': 'startup podcast',
-    'Интервью': 'interview podcast',
-    'Карьера': 'career podcast',
-    'Психология': 'psychology podcast',
-    'Бизнес': 'business podcast',
-  };
-  const [mode, setMode] = useState<'tracks' | 'podcasts'>('tracks');
-  const [activeTag, setActiveTag] = useState('');
->>>>>>> main
+  const [section, setSection] = useState<'music' | 'podcasts'>('music');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [remoteSongs, setRemoteSongs] = useState<DiscoverItem[]>([]);
@@ -2792,17 +2824,11 @@ function DiscoverScreen({
   useEffect(() => {
     setRemoteSongs([]);
     setHasRemoteLoaded(false);
-<<<<<<< HEAD
-  }, [section]);
-=======
     setShowAll(false);
-    setActiveTag('');
-  }, [mode]);
->>>>>>> main
+  }, [section]);
 
   useEffect(() => {
     setShowAll(false);
-    setActiveTag('');
   }, [query]);
 
   const openPodcastEpisodes = async (podcast: DiscoverItem) => {
@@ -2856,14 +2882,8 @@ function DiscoverScreen({
       return;
     }
     const trimmed = query.trim();
-<<<<<<< HEAD
     const effectiveQuery = trimmed.length >= 2 ? trimmed : section === 'podcasts' ? 'top podcasts' : 'top hits';
-=======
-    const effectiveTagQuery = activeTag
-      ? (mode === 'podcasts' ? PODCAST_TAG_QUERY_MAP[activeTag] : TRACK_TAG_QUERY_MAP[activeTag]) || activeTag
-      : '';
-    const effectiveQuery = effectiveTagQuery || (trimmed.length >= 2 ? trimmed : mode === 'podcasts' ? 'top podcasts' : 'top hits');
-    const cacheKey = `${mode}::${effectiveQuery.toLowerCase()}`;
+    const cacheKey = `${section}::${effectiveQuery.toLowerCase()}`;
     const cached = searchCacheRef.current.get(cacheKey);
     if (cached && Date.now() - cached.ts < SEARCH_CACHE_TTL_MS) {
       setLoading(false);
@@ -2871,7 +2891,6 @@ function DiscoverScreen({
       setHasRemoteLoaded(true);
       return;
     }
->>>>>>> main
 
     let cancelled = false;
     const timer = setTimeout(async () => {
@@ -2935,22 +2954,14 @@ function DiscoverScreen({
       cancelled = true;
       clearTimeout(timer);
     };
-<<<<<<< HEAD
   }, [query, token, isDemoMode, section]);
-=======
-  }, [query, token, isDemoMode, mode, activeTag]);
->>>>>>> main
 
   const fallbackList: DiscoverItem[] =
     section === 'podcasts'
       ? PODCASTS.map((item) => ({ ...item, isPodcast: true }))
       : SONGS.map((item) => ({ ...item, isPodcast: false }));
   const list = hasRemoteLoaded ? remoteSongs : fallbackList;
-<<<<<<< HEAD
-=======
   const visibleList = showAll ? list : list.slice(0, 8);
-  const tags = mode === 'podcasts' ? PODCAST_TAGS : TRENDING_TAGS;
->>>>>>> main
 
   return (
     <>
@@ -3040,10 +3051,7 @@ function DiscoverScreen({
         <input
           placeholder={section === 'podcasts' ? 'Поиск подкастов...' : 'Поиск треков и артистов...'}
           value={query}
-          onChange={(e) => {
-            setActiveTag('');
-            setQuery(e.target.value);
-          }}
+          onChange={(e) => setQuery(e.target.value)}
         />
       </div>
       {loading && (
@@ -3055,30 +3063,13 @@ function DiscoverScreen({
       {!loading && list.length === 0 && (
         <div className="search-status">Ничего не найдено</div>
       )}
-<<<<<<< HEAD
       <div className="section-header">
         <h3 className="section-title">{section === 'music' ? 'Музыка' : 'Подкасты'}</h3>
-        <button className="section-more">Ещё <ChevronRight size={16} /></button>
-=======
-      <div className="tag-row">
-        {tags.map((tag) => (
-          <button
-            className={`tag-chip ${activeTag === tag ? 'active' : ''}`}
-            key={tag}
-            onClick={() => setActiveTag((prev) => (prev === tag ? '' : tag))}
-          >
-            {tag}
-          </button>
-        ))}
-      </div>
-      <div className="section-header">
-        <h3 className="section-title">{mode === 'podcasts' ? 'Популярные подкасты' : 'В тренде'}</h3>
         {list.length > 8 && (
           <button className="section-more" onClick={() => setShowAll((v) => !v)}>
             {showAll ? 'Свернуть' : 'Ещё'} <ChevronRight size={16} />
           </button>
         )}
->>>>>>> main
       </div>
       {visibleList.map((song, idx) => (
         <div className="trending-item" key={song.id}>
@@ -3107,19 +3098,9 @@ function DiscoverScreen({
             <p>{song.artist} · {song.duration}</p>
           </div>
           {song.isPodcast ? (
-<<<<<<< HEAD
-            <>
-              <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
-              <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
-              <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
-                <Play size={14} fill="#fff" />
-              </button>
-            </>
-=======
             <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => void openPodcastEpisodes(song)} title="Выбрать выпуск">
               <Play size={14} fill="#fff" />
             </button>
->>>>>>> main
           ) : (
             <>
               <motion.button
