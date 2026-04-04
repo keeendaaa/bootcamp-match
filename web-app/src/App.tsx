@@ -500,7 +500,7 @@ export default function App() {
         contentType: probe.headers.get('content-type'),
       });
       if (!probe.ok) {
-        setPlayerError(`Поток недоступен (${probe.status})`);
+        setPlayerError('Поток недоступен');
       }
     } catch (err) {
       debugLog('stream probe failed', err);
@@ -521,7 +521,7 @@ export default function App() {
     } catch (err) {
       const details = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
       debugLog('audio.play failed', details);
-      setPlayerError(`Не удалось начать воспроизведение (${details})`);
+      setPlayerError('Не удалось начать воспроизведение');
       setIsPlaying(false);
     }
   };
@@ -779,7 +779,7 @@ export default function App() {
         readyState: audio.readyState,
         src: audio.src,
       });
-      setPlayerError(`Ошибка аудио: ${label}`);
+      setPlayerError('Не удалось воспроизвести трек');
     };
     const onStalled = () => debugLog('audio event: stalled', { currentTime: audio.currentTime, src: audio.src });
     const onWaiting = () => debugLog('audio event: waiting', { currentTime: audio.currentTime });
