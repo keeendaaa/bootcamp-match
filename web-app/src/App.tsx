@@ -3010,7 +3010,7 @@ function BottomNav({ tab, onChangeTab }: { tab: Tab; onChangeTab: (t: Tab) => vo
               className={`nav-item ${active ? 'active' : ''}`}
               onClick={() => onChangeTab(item.id)}
             >
-              <div className="nav-icon-wrap"><Icon size={22} fill={active ? 'currentColor' : 'none'} /></div>
+              <div className="nav-icon-wrap"><Icon size={22} strokeWidth={active ? 2.4 : 2} /></div>
               <span>{item.label}</span>
             </button>
           </LiquidGlass>
