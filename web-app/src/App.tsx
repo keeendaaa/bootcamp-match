@@ -1562,6 +1562,7 @@ export default function App() {
             currentUserId={currentUser.id}
             onClose={() => setOpenChat(null)}
             onPlay={(s) => {
+              setOpenChat(null);
               playSong(s);
               setNpOpen(true);
             }}
