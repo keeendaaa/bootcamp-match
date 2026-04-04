@@ -123,8 +123,10 @@ const ONBOARDING_SEEN_KEY = 'match_onboarding_seen';
 const DEMO_TOKEN = '__MATCH_DEMO__';
 const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksandr.jpg', '/avatars/galya.jpg'];
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
-const FRIENDS_POLL_INTERVAL_MS = 1_000;
-const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 1_000;
+const FRIENDS_POLL_INTERVAL_MS = 700;
+const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 1_500;
+const NOW_PLAYING_HEARTBEAT_MS = 5_000;
+const SESSION_POLL_INTERVAL_MS = 1_500;
 const DEVICE_NOW_PLAYING_POLL_INTERVAL_MS = 4_000;
 const DEMO_USER: ApiUser = { id: 0, name: 'Demo User', email: 'demo@match.app', tag: 'demo', avatar_url: '/avatars/user.jpg' };
 
@@ -928,7 +930,7 @@ export default function App() {
     if (!token || !isPlaying || !currentBackendSongId) return;
     const timer = setInterval(() => {
       void touchNowPlayingOnBackend();
-    }, 15000);
+    }, NOW_PLAYING_HEARTBEAT_MS);
     return () => clearInterval(timer);
   }, [token, isPlaying, currentBackendSongId]);
 
@@ -1653,7 +1655,7 @@ export default function App() {
       } catch {
         // noop
       }
-      if (!stop) setTimeout(poll, 3500);
+      if (!stop) setTimeout(poll, SESSION_POLL_INTERVAL_MS);
     };
     void poll();
     return () => {
@@ -1666,11 +1668,11 @@ export default function App() {
     if (isDemoMode) return;
     let stop = false;
     const tick = async () => {
-      let nextDelay = 2500;
+      let nextDelay = SESSION_POLL_INTERVAL_MS;
       try {
         const session = await apiRequest<ApiSession | null>('/listen/active', {}, token);
         setActiveSession(session);
-        if (session) nextDelay = 1200;
+        if (session) nextDelay = 800;
         if (!session) {
           setListeningWith(null);
           setSessionMessages([]);
@@ -2075,7 +2077,6 @@ export default function App() {
           <DiscoverScreen
             token={token}
             isDemoMode={isDemoMode}
-            likedTrackKeys={likedTrackKeys}
             deviceNowPlayingSupported={deviceNowPlayingSupported}
             deviceNowPlayingAccessGranted={deviceNowPlayingAccessGranted}
             deviceNowPlayingTrack={deviceNowPlayingTrack}
@@ -2085,7 +2086,6 @@ export default function App() {
             deviceNowPlayingError={deviceNowPlayingError}
             onOpenDeviceAccessSettings={() => void openDeviceAccessSettings()}
             onRefreshDeviceNowPlaying={() => void refreshDeviceNowPlaying()}
-            onToggleLike={toggleLike}
             onPlay={(s, queue, index) => playSong(s, undefined, queue, index)}
             onEnqueue={enqueueSong}
             onShare={(s) => setShareModal(s)}
@@ -2630,6 +2630,7 @@ function FriendsScreen({
   const [friendName, setFriendName] = useState('');
   const [suggestions, setSuggestions] = useState<ApiUser[]>([]);
   const [searching, setSearching] = useState(false);
+  const friendInputRef = useRef<HTMLInputElement | null>(null);
 
   const submitAddFriend = async () => {
     const trimmed = friendName.trim();
@@ -2637,6 +2638,15 @@ function FriendsScreen({
     await onAddFriend(trimmed);
     setFriendName('');
     setSuggestions([]);
+  };
+
+  const openAddFriendsCta = () => {
+    if (!friendName.trim()) setFriendName('@');
+    requestAnimationFrame(() => {
+      friendInputRef.current?.focus();
+      const valueLength = friendInputRef.current?.value.length ?? 0;
+      friendInputRef.current?.setSelectionRange(valueLength, valueLength);
+    });
   };
 
   useEffect(() => {
@@ -2667,6 +2677,7 @@ function FriendsScreen({
     <>
       <div className="add-friend-row glass-inset">
         <input
+          ref={friendInputRef}
           placeholder="Добавить друга по @тегу"
           value={friendName}
           onChange={(e) => setFriendName(e.target.value)}
@@ -2718,6 +2729,17 @@ function FriendsScreen({
             <span className="story-name">{f.name.split(' ')[0]}</span>
           </div>
         ))}
+        <button
+          type="button"
+          className="story-item story-item-cta"
+          onClick={openAddFriendsCta}
+          aria-label="Найти и добавить друзей"
+        >
+          <div className="story-ring story-cta-ring">
+            <div className="story-cta-icon"><Plus size={18} strokeWidth={2.6} /></div>
+          </div>
+          <span className="story-name">Найти друзей</span>
+        </button>
       </div>
 
       {!loading && friends.length === 0 && (
@@ -2774,7 +2796,6 @@ function FriendsScreen({
 function DiscoverScreen({
   token,
   isDemoMode,
-  likedTrackKeys,
   deviceNowPlayingSupported,
   deviceNowPlayingAccessGranted,
   deviceNowPlayingTrack,
@@ -2784,14 +2805,12 @@ function DiscoverScreen({
   deviceNowPlayingError,
   onOpenDeviceAccessSettings,
   onRefreshDeviceNowPlaying,
-  onToggleLike,
   onPlay,
   onEnqueue,
   onShare,
 }: {
   token: string;
   isDemoMode: boolean;
-  likedTrackKeys: Set<string>;
   deviceNowPlayingSupported: boolean;
   deviceNowPlayingAccessGranted: boolean;
   deviceNowPlayingTrack: DeviceNowPlayingTrack | null;
@@ -2801,13 +2820,12 @@ function DiscoverScreen({
   deviceNowPlayingError: string;
   onOpenDeviceAccessSettings: () => void;
   onRefreshDeviceNowPlaying: () => void;
-  onToggleLike: (song: Song) => Promise<boolean>;
   onPlay: (s: Song, queue?: Song[], index?: number) => void;
   onEnqueue: (song: Song) => void;
   onShare: (s: Song) => void;
 }) {
   type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string; podcastId?: string };
-  const [section, setSection] = useState<'music' | 'podcasts'>('music');
+  const [mode, setMode] = useState<'tracks' | 'podcasts'>('tracks');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [remoteSongs, setRemoteSongs] = useState<DiscoverItem[]>([]);
@@ -2825,7 +2843,7 @@ function DiscoverScreen({
     setRemoteSongs([]);
     setHasRemoteLoaded(false);
     setShowAll(false);
-  }, [section]);
+  }, [mode]);
 
   useEffect(() => {
     setShowAll(false);
@@ -2882,8 +2900,8 @@ function DiscoverScreen({
       return;
     }
     const trimmed = query.trim();
-    const effectiveQuery = trimmed.length >= 2 ? trimmed : section === 'podcasts' ? 'top podcasts' : 'top hits';
-    const cacheKey = `${section}::${effectiveQuery.toLowerCase()}`;
+    const effectiveQuery = trimmed.length >= 2 ? trimmed : mode === 'podcasts' ? 'top podcasts' : 'top hits';
+    const cacheKey = `${mode}::${effectiveQuery.toLowerCase()}`;
     const cached = searchCacheRef.current.get(cacheKey);
     if (cached && Date.now() - cached.ts < SEARCH_CACHE_TTL_MS) {
       setLoading(false);
@@ -2897,7 +2915,7 @@ function DiscoverScreen({
       setLoading(true);
       try {
         let mapped: DiscoverItem[] = [];
-        if (section === 'podcasts') {
+        if (mode === 'podcasts') {
           const accessToken = isDemoMode ? undefined : token;
           const results = await apiRequest<ApiPodcastSearchItem[]>(
             `/podcasts/search?q=${encodeURIComponent(effectiveQuery)}&limit=20`,
@@ -2943,7 +2961,7 @@ function DiscoverScreen({
         }
         const msg = err instanceof Error ? err.message : '';
         if (!msg.includes('401')) {
-          console.warn(section === 'podcasts' ? 'Podcasts search failed' : 'YTM search failed', err);
+          console.warn(mode === 'podcasts' ? 'Podcasts search failed' : 'YTM search failed', err);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -2954,10 +2972,10 @@ function DiscoverScreen({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, token, isDemoMode, section]);
+  }, [query, token, isDemoMode, mode]);
 
   const fallbackList: DiscoverItem[] =
-    section === 'podcasts'
+    mode === 'podcasts'
       ? PODCASTS.map((item) => ({ ...item, isPodcast: true }))
       : SONGS.map((item) => ({ ...item, isPodcast: false }));
   const list = hasRemoteLoaded ? remoteSongs : fallbackList;
@@ -3042,29 +3060,29 @@ function DiscoverScreen({
       </div>
 
       <div className="tag-row">
-        <button className={`tag-chip ${section === 'music' ? 'active' : ''}`} onClick={() => setSection('music')}>Музыка</button>
-        <button className={`tag-chip ${section === 'podcasts' ? 'active' : ''}`} onClick={() => setSection('podcasts')}>Подкасты</button>
+        <button className={`tag-chip ${mode === 'tracks' ? 'active' : ''}`} onClick={() => setMode('tracks')}>Музыка</button>
+        <button className={`tag-chip ${mode === 'podcasts' ? 'active' : ''}`} onClick={() => setMode('podcasts')}>Подкасты</button>
       </div>
 
       <div className="search-bar glass-inset">
         <Search size={18} />
         <input
-          placeholder={section === 'podcasts' ? 'Поиск подкастов...' : 'Поиск треков и артистов...'}
+          placeholder={mode === 'podcasts' ? 'Поиск подкастов...' : 'Поиск треков и артистов...'}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
       </div>
       {loading && (
-        <div className="search-status">{section === 'podcasts' ? 'Ищем подкасты...' : 'Ищем треки в каталоге...'}</div>
+        <div className="search-status">{mode === 'podcasts' ? 'Ищем подкасты...' : 'Ищем треки в каталоге...'}</div>
       )}
       {!loading && query.trim().length < 2 && list.length > 0 && (
-        <div className="search-status">{section === 'podcasts' ? 'Популярные подкасты' : 'Подборка Match'}</div>
+        <div className="search-status">{mode === 'podcasts' ? 'Популярные подкасты' : 'Подборка Match'}</div>
       )}
       {!loading && list.length === 0 && (
         <div className="search-status">Ничего не найдено</div>
       )}
       <div className="section-header">
-        <h3 className="section-title">{section === 'music' ? 'Музыка' : 'Подкасты'}</h3>
+        <h3 className="section-title">{mode === 'podcasts' ? 'Подкасты' : 'Музыка'}</h3>
         {list.length > 8 && (
           <button className="section-more" onClick={() => setShowAll((v) => !v)}>
             {showAll ? 'Свернуть' : 'Ещё'} <ChevronRight size={16} />
@@ -3103,14 +3121,6 @@ function DiscoverScreen({
             </button>
           ) : (
             <>
-              <motion.button
-                className="icon-btn glass-btn-sm"
-                onClick={() => void onToggleLike(song)}
-                animate={likedTrackKeys.has(trackKeyOfSong(song)) ? { scale: [1, 1.18, 1] } : { scale: 1 }}
-                transition={{ duration: 0.28 }}
-              >
-                <Heart size={16} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
-              </motion.button>
               <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
               <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
               <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
