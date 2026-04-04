@@ -419,11 +419,13 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   border-radius: var(--radius-lg);
   padding: 20px;
   margin: 0 24px 16px;
+  max-width: calc(100% - 48px);
   box-shadow: var(--shadow-card);
   border: 1px solid var(--border-light);
+  overflow: hidden;
 }
 
-.widget-user { display: flex; align-items: center; margin-bottom: 16px; }
+.widget-user { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; min-width: 0; }
 .widget-avatar-wrap { position: relative; margin-right: 12px; }
 .widget-avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
 
@@ -433,14 +435,30 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 }
 .online-dot.listening { background: var(--orange-main); }
 
-.widget-user-info { flex: 1; }
-.widget-user-info h3 { margin: 0; font-size: 16px; font-weight: 700; }
-.widget-user-info p { margin: 0; font-size: 13px; color: var(--text-muted); font-weight: 500; }
+.widget-user-info { flex: 1; min-width: 0; }
+.widget-user-info h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.widget-user-info p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .listening-badge {
   display: flex; align-items: center; gap: 4px;
   font-size: 11px; font-weight: 700; color: var(--orange-main);
   background: var(--orange-pale); padding: 4px 10px; border-radius: var(--radius-pill);
+  flex-shrink: 0;
 }
 
 .eq-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
@@ -451,12 +469,13 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 
 @keyframes eqBounce { 0% { height: 4px; } 100% { height: 14px; } }
 
-.song-row-wrap { display: flex; align-items: center; gap: 8px; }
-.song-row-wrap .song-row { flex: 1; }
+.song-row-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.song-row-wrap .song-row { flex: 1; min-width: 0; }
 
 .song-row {
   display: flex; align-items: center; background: var(--surface-hover);
   border-radius: var(--radius-md); padding: 10px; gap: 12px; cursor: pointer;
+  min-width: 0;
 }
 .song-row:hover { background: var(--purple-pale); }
 .song-row img { width: 52px; height: 52px; border-radius: var(--radius-xs); object-fit: cover; }
@@ -915,44 +934,75 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 
 /* ===== SHARE MODAL ===== */
 .share-overlay {
-  position: absolute; inset: 0; background: rgba(0,0,0,0.4);
-  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  position: absolute; inset: 0; background: rgba(8, 12, 24, 0.72);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   z-index: 90; display: flex; align-items: flex-end;
 }
 
 .share-sheet {
   width: 100%; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  padding: 24px; max-height: 75%; overflow-y: auto;
+  padding: 20px 20px 24px;
+  max-height: 82%;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef3ff 100%);
+  border: 1px solid rgba(145, 160, 220, 0.35);
+  box-shadow: 0 -20px 50px rgba(3, 8, 23, 0.5);
+  color: #142038;
 }
 
-.share-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.share-header h3 { margin: 0; font-size: 20px; font-weight: 800; }
+.share-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  position: sticky;
+  top: -20px;
+  padding-top: 8px;
+  background: linear-gradient(180deg, #f8fbff 0%, #f2f6ff 100%);
+  z-index: 2;
+}
+.share-header h3 { margin: 0; font-size: 20px; font-weight: 800; color: #0f1b34; }
+
+.share-header .icon-btn {
+  background: #fff;
+  border: 1px solid rgba(114, 132, 196, 0.35);
+}
 
 .share-song-preview {
   display: flex; align-items: center; gap: 14px; padding: 14px;
   border-radius: var(--radius-md); margin-bottom: 16px;
+  background: rgba(255,255,255,0.86);
+  border: 1px solid rgba(114, 132, 196, 0.2);
 }
 .share-song-preview img { width: 48px; height: 48px; border-radius: var(--radius-xs); object-fit: cover; }
 .share-song-preview h4 { margin: 0 0 2px; font-size: 15px; font-weight: 700; }
 .share-song-preview p { margin: 0; font-size: 13px; color: var(--text-muted); }
 
-.share-label { font-size: 13px; font-weight: 700; color: var(--text-muted); margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+.share-label { font-size: 13px; font-weight: 700; color: #516386; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
 
 .share-friends-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 16px; }
 .share-friend-item {
   display: flex; align-items: center; gap: 12px; padding: 12px;
   border-radius: var(--radius-sm); cursor: pointer;
+  background: rgba(255,255,255,0.75);
+  border: 1px solid rgba(114, 132, 196, 0.15);
 }
-.share-friend-item:hover { background: var(--surface-hover); }
+.share-friend-item:hover { background: #fff; border-color: rgba(114, 132, 196, 0.28); }
 .share-friend-item img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
 .share-friend-item span { font-size: 15px; font-weight: 600; flex: 1; }
-.share-send-icon { color: var(--purple-main); }
+.share-send-icon { color: #2f4cb8; }
 
 .share-copy-btn {
   width: 100%; padding: 14px; border-radius: var(--radius-pill);
   display: flex; align-items: center; justify-content: center; gap: 8px;
-  font-size: 15px; font-weight: 600; color: var(--text-primary);
-  border: 1px solid var(--border-light) !important;
+  font-size: 15px; font-weight: 700; color: #142038;
+  border: 1px solid rgba(114, 132, 196, 0.28) !important;
+  background: rgba(255,255,255,0.92) !important;
+}
+
+.np-chip-danger {
+  border-color: rgba(255, 107, 107, 0.6);
+  background: rgba(255, 107, 107, 0.16);
 }
 
 /* ===== SONG PICKER (in chat) ===== */
