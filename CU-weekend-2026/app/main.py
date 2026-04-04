@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import uuid
+import base64
 from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 from urllib.parse import urlparse
@@ -396,6 +397,24 @@ def parse_episode_audio(feed_url: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def encode_stream_token(url: str) -> str:
+    raw = url.encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_stream_token(token: str) -> str | None:
+    try:
+        padding = "=" * (-len(token) % 4)
+        raw = base64.urlsafe_b64decode((token + padding).encode("ascii"))
+        url = raw.decode("utf-8")
+    except Exception:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    return url
+
+
 def parse_feed_episodes(feed_url: str, limit: int) -> list[PodcastEpisodeItem]:
     try:
         resp = requests.get(feed_url, timeout=15)
@@ -419,15 +438,15 @@ def parse_feed_episodes(feed_url: str, limit: int) -> list[PodcastEpisodeItem]:
         duration_raw = item.findtext("{http://www.itunes.com/dtds/podcast-1.0.dtd}duration")
         pub_date = item.findtext("pubDate")
 
-        stream_id = uuid.uuid4().hex
-        PODCAST_STREAM_CACHE[stream_id] = audio_url
+        stream_token = encode_stream_token(audio_url)
+        PODCAST_STREAM_CACHE[stream_token] = audio_url
         episodes.append(
             PodcastEpisodeItem(
-                episode_id=stream_id,
+                episode_id=stream_token,
                 title=episode_title,
                 duration=duration_raw.strip() if duration_raw else None,
                 published_at=pub_date.strip() if pub_date else None,
-                stream_url=f"/podcasts/stream/{stream_id}",
+                stream_url=f"/podcasts/stream/{stream_token}",
             )
         )
         if len(episodes) >= limit:
@@ -509,20 +528,20 @@ def search_podcasts(
         if not audio_url:
             continue
 
-        stream_id = uuid.uuid4().hex
-        PODCAST_STREAM_CACHE[stream_id] = audio_url
+        stream_token = encode_stream_token(audio_url)
+        PODCAST_STREAM_CACHE[stream_token] = audio_url
         episode_count = row.get("trackCount")
         duration_label = episode_duration or (f"Эпизодов: {episode_count}" if episode_count else "Подкаст")
 
         items.append(
             PodcastSearchItem(
-                podcast_id=str(row.get("trackId") or stream_id),
+                podcast_id=str(row.get("trackId") or stream_token),
                 title=row.get("trackName") or row.get("collectionName") or "Podcast",
                 artist=row.get("artistName") or "Podcast",
                 duration=duration_label,
                 cover_url=row.get("artworkUrl600") or row.get("artworkUrl100"),
                 source_url=row.get("trackViewUrl") or row.get("collectionViewUrl"),
-                stream_url=f"/podcasts/stream/{stream_id}",
+                stream_url=f"/podcasts/stream/{stream_token}",
             )
         )
         if len(items) >= limit:
@@ -564,6 +583,10 @@ def stream_podcast(
     request: Request,
 ) -> StreamingResponse:
     target_url = PODCAST_STREAM_CACHE.get(stream_id)
+    if not target_url:
+        target_url = decode_stream_token(stream_id)
+        if target_url:
+            PODCAST_STREAM_CACHE[stream_id] = target_url
     if not target_url:
         raise HTTPException(status_code=404, detail="Podcast stream not found")
 

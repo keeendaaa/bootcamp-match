@@ -2428,11 +2428,17 @@ function DiscoverScreen({
   const [episodes, setEpisodes] = useState<Song[]>([]);
   const [episodesLoading, setEpisodesLoading] = useState(false);
   const [episodesError, setEpisodesError] = useState('');
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     setRemoteSongs([]);
     setHasRemoteLoaded(false);
+    setShowAll(false);
   }, [mode]);
+
+  useEffect(() => {
+    setShowAll(false);
+  }, [query]);
 
   const openPodcastEpisodes = async (podcast: DiscoverItem) => {
     setEpisodesPodcast(podcast);
@@ -2546,6 +2552,7 @@ function DiscoverScreen({
       ? PODCASTS.map((item) => ({ ...item, isPodcast: true }))
       : SONGS.map((item) => ({ ...item, isPodcast: false }));
   const list = hasRemoteLoaded ? remoteSongs : fallbackList;
+  const visibleList = showAll ? list : list.slice(0, 8);
   const tags = mode === 'podcasts' ? PODCAST_TAGS : TRENDING_TAGS;
 
   return (
@@ -2574,9 +2581,13 @@ function DiscoverScreen({
       </div>
       <div className="section-header">
         <h3 className="section-title">{mode === 'podcasts' ? 'Популярные подкасты' : 'В тренде'}</h3>
-        <button className="section-more">Ещё <ChevronRight size={16} /></button>
+        {list.length > 8 && (
+          <button className="section-more" onClick={() => setShowAll((v) => !v)}>
+            {showAll ? 'Свернуть' : 'Ещё'} <ChevronRight size={16} />
+          </button>
+        )}
       </div>
-      {list.map((song, idx) => (
+      {visibleList.map((song, idx) => (
         <div className="trending-item" key={song.id}>
           <img
             src={song.cover}
