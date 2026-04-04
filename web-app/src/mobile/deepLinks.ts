@@ -5,7 +5,7 @@ export const MATCH_DEEP_LINK_PATH = '/open';
 
 export interface WidgetOpenRequest {
   source: typeof WIDGET_SOURCE;
-  tab: 'chat';
+  tab: 'friends';
   friendId: number;
   trackId?: number;
   autoplay: boolean;
@@ -41,7 +41,7 @@ export const parseWidgetOpenRequest = (rawUrl: string): WidgetOpenRequest | null
 
   return {
     source: WIDGET_SOURCE,
-    tab: 'chat',
+    tab: 'friends',
     friendId,
     trackId: parsePositiveInt(url.searchParams.get('trackId')),
     autoplay: TRUE_VALUES.has((url.searchParams.get('autoplay') || '').toLowerCase()),
@@ -56,7 +56,7 @@ export const getInitialWidgetOpenRequest = (): WidgetOpenRequest | null => {
 export const buildWidgetDeepLink = (request: Omit<WidgetOpenRequest, 'source' | 'tab'>): string => {
   const url = new URL(`${MATCH_DEEP_LINK_SCHEME}://${MATCH_DEEP_LINK_HOST}${MATCH_DEEP_LINK_PATH}`);
   url.searchParams.set('source', WIDGET_SOURCE);
-  url.searchParams.set('tab', 'chat');
+  url.searchParams.set('tab', 'friends');
   url.searchParams.set('friendId', String(request.friendId));
   if (request.trackId) url.searchParams.set('trackId', String(request.trackId));
   if (request.autoplay) url.searchParams.set('autoplay', '1');
@@ -69,7 +69,7 @@ export const buildWidgetWebUrl = (
 ): string => {
   const url = new URL(origin);
   url.searchParams.set('source', WIDGET_SOURCE);
-  url.searchParams.set('tab', 'chat');
+  url.searchParams.set('tab', 'friends');
   url.searchParams.set('friendId', String(request.friendId));
   if (request.trackId) url.searchParams.set('trackId', String(request.trackId));
   if (request.autoplay) url.searchParams.set('autoplay', '1');

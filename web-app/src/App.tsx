@@ -16,7 +16,7 @@ import {
   parseWidgetOpenRequest,
   type WidgetOpenRequest,
 } from './mobile/deepLinks';
-import { publishFriendsWidgetSnapshot } from './mobile/widgetBridge';
+import { publishFriendsWidgetSnapshot, WIDGET_SNAPSHOT_REFRESH_MS } from './mobile/widgetBridge';
 import './index.css';
 
 type Tab = 'friends' | 'discover' | 'chat' | 'profile';
@@ -98,6 +98,8 @@ const AUTH_STORAGE_KEY = 'match_backend_token';
 const DEMO_TOKEN = '__MATCH_DEMO__';
 const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksandr.jpg', '/avatars/galya.jpg'];
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
+const FRIENDS_POLL_INTERVAL_MS = 1_000;
+const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 1_000;
 const FRIENDS_POLL_INTERVAL_MS = 12_000;
 const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 30_000;
 const DEMO_USER: ApiUser = { id: 0, name: 'Demo User', email: 'demo@match.app', tag: 'demo', avatar_url: '/avatars/user.jpg' };
@@ -863,21 +865,15 @@ export default function App() {
 
     const friend = findFriendById(pendingWidgetRequest.friendId);
     if (!friend) return;
-
-    const nextThread = chatThreads.find((thread) => thread.friend.id === friend.id) || {
-      friend,
-      unread: 0,
-      messages: [],
-    };
     const targetSong = friend.currentSong && (!pendingWidgetRequest.trackId || friend.currentSong.id === pendingWidgetRequest.trackId)
       ? friend.currentSong
       : friend.currentSong;
 
-    setTab('chat');
-    openChatThread(nextThread);
+    setTab('friends');
+    setOpenChat(null);
     setShareModal(null);
-    setNpOpen(false);
-    setListeningWith(friend);
+    setNpOpen(Boolean(targetSong));
+    setListeningWith(targetSong ? friend : null);
     setActiveQueue(null);
     setQueueIndex(null);
     setPlayerError('');
@@ -894,7 +890,7 @@ export default function App() {
 
     setPendingWidgetRequest(null);
     clearHandledWidgetParams();
-  }, [pendingWidgetRequest, token, currentUser, chatThreads, friends, findFriendById, selectSongInPlayer, startPlayback, openChatThread]);
+  }, [pendingWidgetRequest, token, currentUser, friends, findFriendById, selectSongInPlayer, startPlayback]);
 
   const toggleLike = async (song: Song): Promise<boolean> => {
     if (!token) return false;
@@ -1092,6 +1088,16 @@ export default function App() {
     if (!currentUser) return;
     void publishFriendsWidgetSnapshot(friends, currentUser.name).catch(() => undefined);
   }, [friends, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const timer = window.setInterval(() => {
+      void publishFriendsWidgetSnapshot(friendsRef.current, currentUser.name).catch(() => undefined);
+    }, WIDGET_SNAPSHOT_REFRESH_MS);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [currentUser]);
 
   useEffect(() => {
     if (!token || !currentUser) return;
@@ -2532,7 +2538,7 @@ function ProfileScreen({
           <div className="profile-stat"><span className="num">{stats.likes}</span><span className="label">Лайки</span></div>
         </div>
       </div>
-      <div className="section-header"><h3 className="section-title">Загруженные треки</h3></div>
+      <div className="section-header"><h3 className="section-title">Последние проигранные треки</h3></div>
       {uploadedSongs.map((song) => (
         <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
           <img src={song.cover} alt="" />
@@ -2545,7 +2551,7 @@ function ProfileScreen({
           </button>
         </div>
       ))}
-      {uploadedSongs.length === 0 && <div className="search-status">Загруженные в этой сессии треки появятся здесь</div>}
+      {uploadedSongs.length === 0 && <div className="search-status">Здесь будут появляться последние треки, которые вы слушали</div>}
       <div className="section-header"><h3 className="section-title">Лайкнутые треки</h3></div>
       {likedSongs.slice(0, 20).map((song) => (
         <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>

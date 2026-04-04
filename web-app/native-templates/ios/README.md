@@ -13,7 +13,7 @@
 
 - JS-часть публикует snapshot в plugin `FriendsWidget.publishSnapshot`.
 - Виджет читает этот snapshot из shared `UserDefaults`.
-- Тап по виджету открывает `matchapp://widget/open?...`, а React уже умеет разобрать этот deeplink и открыть чат с другом.
+- Тап по виджету открывает `matchapp://widget/open?...`, а React уже умеет разобрать этот deeplink и открыть экран друзей на нужном текущем треке.
 
 Что нужно проверить вручную в Xcode:
 

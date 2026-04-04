@@ -68,7 +68,7 @@ struct FriendsWidgetProvider: TimelineProvider {
 
   func getTimeline(in context: Context, completion: @escaping (Timeline<FriendsWidgetEntry>) -> Void) {
     let entry = FriendsWidgetEntry(date: Date(), snapshot: loadSnapshot())
-    let nextRefresh = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date().addingTimeInterval(900)
+    let nextRefresh = Calendar.current.date(byAdding: .minute, value: 10, to: Date()) ?? Date().addingTimeInterval(600)
     completion(Timeline(entries: [entry], policy: .after(nextRefresh)))
   }
 
@@ -225,7 +225,7 @@ struct FriendsNowPlayingWidget: Widget {
       FriendsNowPlayingWidgetEntryView(entry: entry)
     }
     .configurationDisplayName("Что играет у друзей")
-    .description("Открывает приложение на нужном треке и чате.")
+    .description("Открывает друзей на нужном треке.")
     .supportedFamilies([.systemLarge])
   }
 }
