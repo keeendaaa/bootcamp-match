@@ -97,14 +97,6 @@ const API_ORIGIN = API_BASE.replace(/\/api$/, '');
 const AUTH_STORAGE_KEY = 'match_backend_token';
 const ONBOARDING_SEEN_KEY = 'match_onboarding_seen';
 const DEMO_TOKEN = '__MATCH_DEMO__';
-const DEMO_AUDIO_FALLBACKS = [
-  'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-  'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
-  'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
-  'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',
-  'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3',
-  'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3',
-];
 const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksandr.jpg', '/avatars/galya.jpg'];
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
 const FRIENDS_POLL_INTERVAL_MS = 12_000;
@@ -475,9 +467,6 @@ export default function App() {
     setCustomSong(song);
   };
   const resolveStreamUrl = (song: Song): string | null => {
-    if (isDemoMode && song.streamUrl?.startsWith('/music/stream/')) {
-      return DEMO_AUDIO_FALLBACKS[Math.abs(song.id) % DEMO_AUDIO_FALLBACKS.length];
-    }
     return normalizePlayableUrl(song.streamUrl) || null;
   };
 
