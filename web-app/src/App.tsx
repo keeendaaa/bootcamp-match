@@ -2063,7 +2063,6 @@ export default function App() {
             onUploadTrack={uploadTrack}
             onUpdateTag={updateMyTag}
             onPlay={(s) => playSong(s)}
-            onEnqueue={enqueueSong}
           />
         )}
       </motion.div>
@@ -2169,7 +2168,6 @@ export default function App() {
               setFriendProfile(null);
               playSong(song, friendProfile);
             }}
-            onEnqueue={enqueueSong}
             onAddSong={addFriendSongToLibrary}
           />
         )}
@@ -2441,7 +2439,6 @@ function FriendProfileModal({
   likedTrackKeys,
   onClose,
   onPlay,
-  onEnqueue,
   onAddSong,
 }: {
   friend: Friend;
@@ -2451,7 +2448,6 @@ function FriendProfileModal({
   likedTrackKeys: Set<string>;
   onClose: () => void;
   onPlay: (song: Song) => void;
-  onEnqueue: (song: Song) => void;
   onAddSong: (song: Song) => Promise<boolean>;
 }) {
   const [savingTrackKey, setSavingTrackKey] = useState<string | null>(null);
@@ -2526,13 +2522,6 @@ function FriendProfileModal({
                     <h4>{song.title}</h4>
                     <p>{song.artist} · {song.duration}</p>
                   </div>
-                  <button
-                    className="icon-btn glass-btn-sm"
-                    onClick={() => onEnqueue(song)}
-                    title="Добавить в очередь"
-                  >
-                    <Plus size={16} />
-                  </button>
                   <button
                     className="profile-avatar-btn friend-save-btn"
                     onClick={() => void handleAddSong(song)}
@@ -3104,7 +3093,6 @@ function DiscoverScreen({
             </button>
           ) : (
             <>
-              <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
               <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
               <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
                 <Play size={14} fill="#fff" />
@@ -3483,7 +3471,6 @@ function ProfileScreen({
   onUploadTrack,
   onUpdateTag,
   onPlay,
-  onEnqueue,
 }: {
   currentUser: ApiUser;
   stats: ApiProfileStats;
@@ -3495,7 +3482,6 @@ function ProfileScreen({
   onUploadTrack: (file: File) => Promise<Song>;
   onUpdateTag: (tag: string) => Promise<void>;
   onPlay: (song: Song) => void;
-  onEnqueue: (song: Song) => void;
 }) {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const trackInputRef = useRef<HTMLInputElement | null>(null);
@@ -3619,12 +3605,6 @@ function ProfileScreen({
           >
             <Heart size={18} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
           </motion.button>
-          <button className="icon-btn glass-btn-sm" onClick={(e) => {
-            e.stopPropagation();
-            onEnqueue(song);
-          }}>
-            <Plus size={16} />
-          </button>
           <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
             e.stopPropagation();
             onPlay(song);
@@ -3639,12 +3619,6 @@ function ProfileScreen({
         <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
           <img src={song.cover} alt="" />
           <div className="trending-info"><h4>{song.title}</h4><p>{song.artist} · {song.duration}</p></div>
-          <button className="icon-btn glass-btn-sm" onClick={(e) => {
-            e.stopPropagation();
-            onEnqueue(song);
-          }}>
-            <Plus size={16} />
-          </button>
           <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
             e.stopPropagation();
             onPlay(song);
