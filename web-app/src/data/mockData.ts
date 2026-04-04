@@ -42,10 +42,10 @@ export const SONGS: Song[] = [
 ];
 
 export const PODCASTS: Song[] = [
-  { id: 101, title: 'Подкаст: Как строить продукт в 2026', artist: 'MVP Talks', cover: '/covers/cover1.jpg', duration: '42:18', streamUrl: '/music/stream/4NRXx6U8ABQ' },
-  { id: 102, title: 'Подкаст: Музыка и алгоритмы рекомендаций', artist: 'Audio Future', cover: '/covers/cover2.jpg', duration: '37:05', streamUrl: '/music/stream/TUVcZfQe-Kw' },
-  { id: 103, title: 'Подкаст: Рост соцприложений без бюджета', artist: 'Startup Wave', cover: '/covers/cover3.jpg', duration: '55:44', streamUrl: '/music/stream/tQ0yjYUFKAE' },
-  { id: 104, title: 'Подкаст: UX для мобильных привычек', artist: 'Design Jam', cover: '/covers/cover4.jpg', duration: '31:20', streamUrl: '/music/stream/kTJczUoc26U' },
+  { id: 101, title: 'Подкаст: Как строить продукт в 2026', artist: 'MVP Talks', cover: '/covers/cover1.jpg', duration: 'Эпизодов: 48' },
+  { id: 102, title: 'Подкаст: Музыка и алгоритмы рекомендаций', artist: 'Audio Future', cover: '/covers/cover2.jpg', duration: 'Эпизодов: 64' },
+  { id: 103, title: 'Подкаст: Рост соцприложений без бюджета', artist: 'Startup Wave', cover: '/covers/cover3.jpg', duration: 'Эпизодов: 29' },
+  { id: 104, title: 'Подкаст: UX для мобильных привычек', artist: 'Design Jam', cover: '/covers/cover4.jpg', duration: 'Эпизодов: 37' },
 ];
 
 export const FRIENDS: Friend[] = [

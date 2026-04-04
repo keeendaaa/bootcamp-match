@@ -6,7 +6,7 @@ import {
   ChevronDown, Heart, Shuffle, Repeat,
   Share2, Send, ArrowLeft, Bell, LogOut,
   Plus, ChevronRight,
-  Mic, MicOff, X
+  Mic, MicOff, X, ExternalLink
 } from 'lucide-react';
 import { SONGS, PODCASTS, FRIENDS, CHAT_THREADS, TRENDING_TAGS, PODCAST_TAGS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
 import { listenForAppUrls } from './mobile/capacitor';
@@ -90,6 +90,19 @@ type ApiMusicSearchItem = {
   cover_url: string | null;
   source_url: string;
   stream_url: string | null;
+};
+type ApiPodcastSearchItem = {
+  trackId?: number;
+  artistName?: string;
+  trackName?: string;
+  collectionName?: string;
+  artworkUrl600?: string;
+  artworkUrl100?: string;
+  trackCount?: number;
+  primaryGenreName?: string;
+  trackViewUrl?: string;
+  collectionViewUrl?: string;
+  feedUrl?: string;
 };
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'https://matchapp.site/api';
@@ -2398,10 +2411,11 @@ function DiscoverScreen({
   onPlay: (s: Song, queue?: Song[], index?: number) => void;
   onShare: (s: Song) => void;
 }) {
+  type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string };
   const [mode, setMode] = useState<'tracks' | 'podcasts'>('tracks');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [remoteSongs, setRemoteSongs] = useState<Song[]>([]);
+  const [remoteSongs, setRemoteSongs] = useState<DiscoverItem[]>([]);
   const [hasRemoteLoaded, setHasRemoteLoaded] = useState(false);
 
   useEffect(() => {
@@ -2423,22 +2437,41 @@ function DiscoverScreen({
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const accessToken = isDemoMode ? undefined : token;
-        const results = await apiRequest<ApiMusicSearchItem[]>(
-          `/music/search?q=${encodeURIComponent(effectiveQuery)}&limit=20`,
-          {},
-          accessToken
-        );
+        let mapped: DiscoverItem[] = [];
+        if (mode === 'podcasts') {
+          const resp = await fetch(
+            `https://itunes.apple.com/search?term=${encodeURIComponent(effectiveQuery)}&entity=podcast&limit=20&country=US`
+          );
+          if (!resp.ok) throw new Error(`Podcast API ${resp.status}`);
+          const data = (await resp.json()) as { results?: ApiPodcastSearchItem[] };
+          const results = data.results || [];
+          mapped = results.map((item, idx) => ({
+            id: item.trackId || 3_000_000 + idx,
+            title: trimSongTitle(item.trackName || item.collectionName || 'Podcast'),
+            artist: item.artistName || 'Podcast',
+            cover: item.artworkUrl600 || item.artworkUrl100 || PODCASTS[idx % PODCASTS.length].cover,
+            duration: item.trackCount ? `Эпизодов: ${item.trackCount}` : (item.primaryGenreName || 'Подкаст'),
+            isPodcast: true,
+            externalUrl: item.trackViewUrl || item.collectionViewUrl || item.feedUrl,
+          }));
+        } else {
+          const accessToken = isDemoMode ? undefined : token;
+          const results = await apiRequest<ApiMusicSearchItem[]>(
+            `/music/search?q=${encodeURIComponent(effectiveQuery)}&limit=20`,
+            {},
+            accessToken
+          );
+          mapped = results.map((item, idx) => ({
+            id: 2_000_000 + idx,
+            title: trimSongTitle(item.title),
+            artist: item.artist,
+            cover: item.cover_url || SONGS[idx % SONGS.length].cover,
+            duration: item.duration || '—',
+            streamUrl: item.stream_url || undefined,
+            isPodcast: false,
+          }));
+        }
         if (cancelled) return;
-        const fallbackCovers = mode === 'podcasts' ? PODCASTS : SONGS;
-        const mapped: Song[] = results.map((item, idx) => ({
-          id: (mode === 'podcasts' ? 3_000_000 : 2_000_000) + idx,
-          title: trimSongTitle(item.title),
-          artist: item.artist,
-          cover: item.cover_url || fallbackCovers[idx % fallbackCovers.length].cover,
-          duration: item.duration || '—',
-          streamUrl: item.stream_url || undefined,
-        }));
         setRemoteSongs(mapped);
         setHasRemoteLoaded(true);
       } catch (err) {
@@ -2461,7 +2494,10 @@ function DiscoverScreen({
     };
   }, [query, token, isDemoMode, mode]);
 
-  const fallbackList = mode === 'podcasts' ? PODCASTS : SONGS;
+  const fallbackList: DiscoverItem[] =
+    mode === 'podcasts'
+      ? PODCASTS.map((item) => ({ ...item, isPodcast: true }))
+      : SONGS.map((item) => ({ ...item, isPodcast: false }));
   const list = hasRemoteLoaded ? remoteSongs : fallbackList;
   const tags = mode === 'podcasts' ? PODCAST_TAGS : TRENDING_TAGS;
 
@@ -2495,23 +2531,56 @@ function DiscoverScreen({
       </div>
       {list.map((song, idx) => (
         <div className="trending-item" key={song.id}>
-          <img src={song.cover} alt="" onClick={() => onPlay(song, list, idx)} />
-          <div className="trending-info" onClick={() => onPlay(song, list, idx)}>
+          <img
+            src={song.cover}
+            alt=""
+            onClick={() => {
+              if (song.isPodcast) {
+                if (song.externalUrl) window.open(song.externalUrl, '_blank', 'noopener,noreferrer');
+                return;
+              }
+              onPlay(song, list, idx);
+            }}
+          />
+          <div
+            className="trending-info"
+            onClick={() => {
+              if (song.isPodcast) {
+                if (song.externalUrl) window.open(song.externalUrl, '_blank', 'noopener,noreferrer');
+                return;
+              }
+              onPlay(song, list, idx);
+            }}
+          >
             <h4>{song.title}</h4>
             <p>{song.artist} · {song.duration}</p>
           </div>
-          <motion.button
-            className="icon-btn glass-btn-sm"
-            onClick={() => void onToggleLike(song)}
-            animate={likedTrackKeys.has(trackKeyOfSong(song)) ? { scale: [1, 1.18, 1] } : { scale: 1 }}
-            transition={{ duration: 0.28 }}
-          >
-            <Heart size={16} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
-          </motion.button>
-          <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
-          <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
-            <Play size={14} fill="#fff" />
-          </button>
+          {song.isPodcast ? (
+            <button
+              className="icon-btn glass-btn-sm"
+              onClick={() => {
+                if (song.externalUrl) window.open(song.externalUrl, '_blank', 'noopener,noreferrer');
+              }}
+              title="Открыть подкаст"
+            >
+              <ExternalLink size={16} />
+            </button>
+          ) : (
+            <>
+              <motion.button
+                className="icon-btn glass-btn-sm"
+                onClick={() => void onToggleLike(song)}
+                animate={likedTrackKeys.has(trackKeyOfSong(song)) ? { scale: [1, 1.18, 1] } : { scale: 1 }}
+                transition={{ duration: 0.28 }}
+              >
+                <Heart size={16} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
+              </motion.button>
+              <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
+              <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
+                <Play size={14} fill="#fff" />
+              </button>
+            </>
+          )}
         </div>
       ))}
     </>
