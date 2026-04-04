@@ -6,11 +6,11 @@ import base64
 import time
 from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import jwt
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 import requests
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -64,6 +64,7 @@ NOW_PLAYING_TTL_SECONDS = 40
 PODCAST_SEARCH_TTL_SECONDS = 300
 PODCAST_LOOKUP_TTL_SECONDS = 600
 PODCAST_EPISODES_TTL_SECONDS = 300
+SOCIAL_STATE_TTL_SECONDS = 600
 VOICE_WS_CONNECTIONS: dict[int, dict[int, set[WebSocket]]] = {}
 PODCAST_PROXY_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -87,6 +88,16 @@ def create_tag_seed(name: str, email: str) -> str:
     local = email.split("@", 1)[0].strip()
     base = normalize_tag(local) or normalize_tag(name) or "user"
     return base
+
+
+def ensure_unique_name(db: Session, base_name: str) -> str:
+    name = (base_name or "user").strip()[:64] or "user"
+    candidate = name
+    suffix = 1
+    while db.query(User).filter(User.name == candidate).first():
+        suffix += 1
+        candidate = f"{name[:56]}{suffix}"
+    return candidate
 
 
 def build_uploaded_song_filename(filename: str) -> str:
@@ -203,6 +214,243 @@ def format_duration_hms(total_seconds: int | None) -> str | None:
     if hours:
         return f"{hours}:{minutes:02d}:{seconds:02d}"
     return f"{minutes}:{seconds:02d}"
+
+
+def resolve_social_target(origin: str | None, request: Request) -> str:
+    raw = (origin or settings.social_auth_default_origin or "").strip()
+    if not raw:
+        raw = str(request.base_url).rstrip("/")
+
+    parsed = urlsplit(raw)
+    if parsed.scheme == "matchapp":
+        if parsed.netloc not in {"", "auth"}:
+            raise HTTPException(status_code=400, detail="Unsupported auth target")
+        path = parsed.path or "/callback"
+        return urlunsplit(("matchapp", "auth", path, "", ""))
+
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=400, detail="Unsupported auth target")
+
+    request_host = request.url.hostname or ""
+    default_host = urlsplit(settings.social_auth_default_origin or "").hostname or ""
+    allowed_hosts = {host for host in {request_host, default_host, "localhost", "127.0.0.1"} if host}
+    if parsed.hostname not in allowed_hosts:
+        raise HTTPException(status_code=400, detail="Unsupported auth target")
+
+    path = parsed.path or "/"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def append_auth_result(target: str, provider: str, access_token: str | None = None, error: str | None = None) -> str:
+    parsed = urlsplit(target)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["auth"] = "1"
+    query["provider"] = provider
+    fragment_values: dict[str, str] = {}
+    if access_token:
+        fragment_values["access_token"] = access_token
+    if error:
+        fragment_values["auth_error"] = error
+    return urlunsplit((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        urlencode(query),
+        urlencode(fragment_values),
+    ))
+
+
+def build_social_state(provider: str, target: str) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "provider": provider,
+        "target": target,
+        "iat": int(now.timestamp()),
+        "exp": now + timedelta(seconds=SOCIAL_STATE_TTL_SECONDS),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_social_state(provider: str, state: str) -> str:
+    try:
+        payload = jwt.decode(state, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid auth state")
+    if payload.get("provider") != provider:
+        raise HTTPException(status_code=400, detail="Invalid auth state")
+    target = str(payload.get("target") or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="Invalid auth state")
+    return target
+
+
+def resolve_social_redirect_uri(request: Request, provider: str) -> str:
+    configured = (
+        settings.google_redirect_uri if provider == "google" else settings.yandex_redirect_uri
+    )
+    if configured:
+        return configured.strip()
+    return str(request.url_for(f"{provider}_auth_callback"))
+
+
+def build_google_authorize_url(request: Request, target: str) -> str:
+    if not settings.google_client_id or not settings.google_client_secret:
+        raise HTTPException(status_code=500, detail="Google auth is not configured")
+    redirect_uri = resolve_social_redirect_uri(request, "google")
+    params = {
+        "client_id": settings.google_client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid profile email",
+        "access_type": "online",
+        "include_granted_scopes": "true",
+        "prompt": "select_account",
+        "state": build_social_state("google", target),
+    }
+    return f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+
+
+def exchange_google_code(request: Request, code: str) -> dict:
+    redirect_uri = resolve_social_redirect_uri(request, "google")
+    response = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code": code,
+            "client_id": settings.google_client_id or "",
+            "client_secret": settings.google_client_secret or "",
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+        },
+        timeout=20,
+    )
+    if not response.ok:
+        raise HTTPException(status_code=502, detail="Google token exchange failed")
+    token_payload = response.json()
+    access_token = str(token_payload.get("access_token") or "")
+    if not access_token:
+        raise HTTPException(status_code=502, detail="Google token exchange failed")
+    userinfo = requests.get(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=20,
+    )
+    if not userinfo.ok:
+        raise HTTPException(status_code=502, detail="Google userinfo failed")
+    return userinfo.json()
+
+
+def build_yandex_authorize_url(request: Request, target: str) -> str:
+    if not settings.yandex_client_id or not settings.yandex_client_secret:
+        raise HTTPException(status_code=500, detail="Yandex auth is not configured")
+    redirect_uri = resolve_social_redirect_uri(request, "yandex")
+    params = {
+        "response_type": "code",
+        "client_id": settings.yandex_client_id,
+        "redirect_uri": redirect_uri,
+        "state": build_social_state("yandex", target),
+        "force_confirm": "yes",
+    }
+    return f"https://oauth.yandex.ru/authorize?{urlencode(params)}"
+
+
+def exchange_yandex_code(request: Request, code: str) -> dict:
+    redirect_uri = resolve_social_redirect_uri(request, "yandex")
+    response = requests.post(
+        "https://oauth.yandex.ru/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": settings.yandex_client_id or "",
+            "client_secret": settings.yandex_client_secret or "",
+            "redirect_uri": redirect_uri,
+        },
+        timeout=20,
+    )
+    if not response.ok:
+        raise HTTPException(status_code=502, detail="Yandex token exchange failed")
+    token_payload = response.json()
+    access_token = str(token_payload.get("access_token") or "")
+    if not access_token:
+        raise HTTPException(status_code=502, detail="Yandex token exchange failed")
+    userinfo = requests.get(
+        "https://login.yandex.ru/info",
+        params={"format": "json"},
+        headers={"Authorization": f"OAuth {access_token}"},
+        timeout=20,
+    )
+    if not userinfo.ok:
+        raise HTTPException(status_code=502, detail="Yandex userinfo failed")
+    return userinfo.json()
+
+
+def get_google_identity(profile: dict) -> tuple[str, str, str, str | None]:
+    social_id = str(profile.get("sub") or "").strip()
+    if not social_id:
+        raise HTTPException(status_code=502, detail="Google profile is incomplete")
+    email = str(profile.get("email") or f"google-{social_id}@social.match").strip().lower()
+    display_name = str(profile.get("name") or profile.get("given_name") or profile.get("email") or "Google User").strip()
+    avatar_url = str(profile.get("picture") or "").strip() or None
+    return social_id, email, display_name, avatar_url
+
+
+def get_yandex_identity(profile: dict) -> tuple[str, str, str, str | None]:
+    social_id = str(profile.get("id") or profile.get("uid") or "").strip()
+    if not social_id:
+        raise HTTPException(status_code=502, detail="Yandex profile is incomplete")
+    email = str(
+        profile.get("default_email")
+        or profile.get("email")
+        or f"yandex-{social_id}@social.match"
+    ).strip().lower()
+    display_name = str(
+        profile.get("real_name")
+        or profile.get("display_name")
+        or profile.get("login")
+        or email
+        or "Yandex User"
+    ).strip()
+    avatar_id = str(profile.get("default_avatar_id") or profile.get("avatar_id") or "").strip()
+    avatar_url = f"https://avatars.yandex.net/get-yapic/{avatar_id}/islands-200" if avatar_id else None
+    return social_id, email, display_name, avatar_url
+
+
+def get_or_create_social_user(
+    db: Session,
+    provider: str,
+    social_id: str,
+    email: str,
+    display_name: str,
+    avatar_url: str | None,
+) -> User:
+    user = db.query(User).filter(User.email == email).first() if email else None
+    if user:
+        updated = False
+        if avatar_url and user.avatar_url != avatar_url:
+            user.avatar_url = avatar_url
+            updated = True
+        if not user.tag:
+            user.tag = ensure_unique_tag(db, create_tag_seed(user.name, email))
+            updated = True
+        if updated:
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        return user
+
+    base_name = display_name or email.split("@", 1)[0] or f"{provider}_{social_id}"
+    name = ensure_unique_name(db, base_name)
+    safe_email = email or f"{provider}-{social_id}@social.match"
+    user = User(
+        name=name,
+        email=safe_email,
+        password_hash=None,
+        tag=ensure_unique_tag(db, create_tag_seed(name, safe_email)),
+        avatar_url=avatar_url,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def search_music_with_ytdlp(q: str, limit: int) -> list[MusicSearchItem]:
@@ -723,6 +971,88 @@ def login(payload: AuthLoginRequest, db: Session = Depends(get_db)) -> TokenResp
 
     token = create_access_token(user)
     return TokenResponse(access_token=token, user=user_to_public(user))
+
+
+@app.get("/auth/google/start")
+def google_auth_start(request: Request, origin: str | None = Query(default=None)) -> RedirectResponse:
+    target = resolve_social_target(origin, request)
+    try:
+        redirect_url = build_google_authorize_url(request, target)
+    except HTTPException as exc:
+        if exc.status_code >= 500:
+            return RedirectResponse(append_auth_result(target, "google", error="Google auth is not configured"))
+        raise
+    return RedirectResponse(redirect_url)
+
+
+@app.get("/auth/google/callback", name="google_auth_callback")
+def google_auth_callback(
+    request: Request,
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    target = resolve_social_target(settings.social_auth_default_origin, request)
+    if state:
+        try:
+            target = decode_social_state("google", state)
+        except HTTPException:
+            pass
+    if error:
+        return RedirectResponse(append_auth_result(target, "google", error=error))
+    if not code or not state:
+        return RedirectResponse(append_auth_result(target, "google", error="Google auth failed"))
+    try:
+        target = decode_social_state("google", state)
+        profile = exchange_google_code(request, code)
+        social_id, email, display_name, avatar_url = get_google_identity(profile)
+        user = get_or_create_social_user(db, "google", social_id, email, display_name, avatar_url)
+        token = create_access_token(user)
+        return RedirectResponse(append_auth_result(target, "google", access_token=token))
+    except HTTPException as exc:
+        return RedirectResponse(append_auth_result(target, "google", error=str(exc.detail)))
+
+
+@app.get("/auth/yandex/start")
+def yandex_auth_start(request: Request, origin: str | None = Query(default=None)) -> RedirectResponse:
+    target = resolve_social_target(origin, request)
+    try:
+        redirect_url = build_yandex_authorize_url(request, target)
+    except HTTPException as exc:
+        if exc.status_code >= 500:
+            return RedirectResponse(append_auth_result(target, "yandex", error="Yandex auth is not configured"))
+        raise
+    return RedirectResponse(redirect_url)
+
+
+@app.get("/auth/yandex/callback", name="yandex_auth_callback")
+def yandex_auth_callback(
+    request: Request,
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    target = resolve_social_target(settings.social_auth_default_origin, request)
+    if state:
+        try:
+            target = decode_social_state("yandex", state)
+        except HTTPException:
+            pass
+    if error:
+        return RedirectResponse(append_auth_result(target, "yandex", error=error))
+    if not code or not state:
+        return RedirectResponse(append_auth_result(target, "yandex", error="Yandex auth failed"))
+    try:
+        target = decode_social_state("yandex", state)
+        profile = exchange_yandex_code(request, code)
+        social_id, email, display_name, avatar_url = get_yandex_identity(profile)
+        user = get_or_create_social_user(db, "yandex", social_id, email, display_name, avatar_url)
+        token = create_access_token(user)
+        return RedirectResponse(append_auth_result(target, "yandex", access_token=token))
+    except HTTPException as exc:
+        return RedirectResponse(append_auth_result(target, "yandex", error=str(exc.detail)))
 
 
 @app.post("/friends", response_model=UserPublic)

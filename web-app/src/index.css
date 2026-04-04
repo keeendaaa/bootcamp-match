@@ -273,6 +273,67 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   color: var(--text-secondary);
 }
 
+.auth-socials {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.auth-social-btn {
+  height: 46px;
+  border-radius: var(--radius-pill);
+  font-size: 15px;
+  font-weight: 700;
+  border: 1px solid rgba(19, 28, 45, 0.08);
+  background: #fff;
+  color: #131c2d;
+  box-shadow: var(--shadow-sm);
+}
+
+.auth-social-btn.google {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.auth-social-btn.yandex {
+  background: linear-gradient(180deg, #fff5f2 0%, #fff 100%);
+  color: #c93400;
+  border-color: rgba(201, 52, 0, 0.14);
+}
+
+.auth-social-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-divider {
+  position: relative;
+  text-align: center;
+  margin: 0 0 14px;
+}
+
+.auth-divider::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: rgba(19, 28, 45, 0.08);
+}
+
+.auth-divider span {
+  position: relative;
+  display: inline-block;
+  padding: 0 10px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .auth-tabs {
   display: flex;
   gap: 8px;
@@ -427,6 +488,13 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   min-width: 72px;
 }
 
+.story-item-cta {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
 .story-ring {
   width: 64px;
   height: 64px;
@@ -436,6 +504,26 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
 }
 
 .story-ring.inactive { background: var(--border-light); }
+
+.story-cta-ring {
+  background: linear-gradient(145deg, rgba(122, 61, 255, 0.2), rgba(255, 106, 58, 0.2));
+  border: 1px dashed rgba(122, 61, 255, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.story-cta-icon {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--purple-main);
+  background: rgba(255, 255, 255, 0.9);
+}
 
 .story-ring img {
   width: 100%;
@@ -453,6 +541,11 @@ button { background: none; border: none; outline: none; cursor: pointer; color: 
   max-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.story-item-cta .story-name {
+  color: var(--purple-main);
+  font-weight: 700;
 }
 
 .story-add-btn {

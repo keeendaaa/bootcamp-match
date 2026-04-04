@@ -11,9 +11,15 @@ import {
 import { SONGS, PODCASTS, FRIENDS, CHAT_THREADS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
 import { getNativePlatform, isNativeApp, listenForAppUrls } from './mobile/capacitor';
 import {
+  buildNativeSocialCallbackTarget,
+  buildSocialCallbackTarget,
+  clearHandledAuthParams,
   clearHandledWidgetParams,
   getInitialWidgetOpenRequest,
+  getInitialAuthCallbackResult,
+  parseAuthCallbackResult,
   parseWidgetOpenRequest,
+  type AuthCallbackResult,
   type WidgetOpenRequest,
 } from './mobile/deepLinks';
 import { NowPlayingDetector, type DeviceNowPlayingTrack } from './mobile/nowPlayingDetector';
@@ -82,6 +88,7 @@ type ApiDirectThread = {
   unread: number;
 };
 type AuthMode = 'login' | 'register';
+type SocialProvider = 'google' | 'yandex';
 type RepeatMode = 'off' | 'all' | 'one';
 type ApiMusicSearchItem = {
   video_id: string;
@@ -116,8 +123,10 @@ const ONBOARDING_SEEN_KEY = 'match_onboarding_seen';
 const DEMO_TOKEN = '__MATCH_DEMO__';
 const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksandr.jpg', '/avatars/galya.jpg'];
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
-const FRIENDS_POLL_INTERVAL_MS = 1_000;
-const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 1_000;
+const FRIENDS_POLL_INTERVAL_MS = 700;
+const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 1_500;
+const NOW_PLAYING_HEARTBEAT_MS = 5_000;
+const SESSION_POLL_INTERVAL_MS = 1_500;
 const DEVICE_NOW_PLAYING_POLL_INTERVAL_MS = 4_000;
 const DEMO_USER: ApiUser = { id: 0, name: 'Demo User', email: 'demo@match.app', tag: 'demo', avatar_url: '/avatars/user.jpg' };
 
@@ -188,6 +197,47 @@ const normalizePlayableUrl = (raw?: string | null): string | undefined => {
     // noop
   }
   return undefined;
+};
+
+const decodePodcastStreamToken = (token: string): string | null => {
+  const normalizedToken = token.replace(/-/g, '+').replace(/_/g, '/');
+  const paddedToken = normalizedToken.padEnd(Math.ceil(normalizedToken.length / 4) * 4, '=');
+  try {
+    return atob(paddedToken);
+  } catch {
+    return null;
+  }
+};
+
+const extractDirectPodcastUrlFromProxy = (rawUrl?: string | null): string | null => {
+  const normalized = normalizePlayableUrl(rawUrl);
+  if (!normalized) return null;
+  try {
+    const parsed = new URL(normalized);
+    const marker = '/podcasts/stream/';
+    const markerIdx = parsed.pathname.indexOf(marker);
+    if (markerIdx < 0) return null;
+    const token = parsed.pathname.slice(markerIdx + marker.length).split('/')[0];
+    if (!token) return null;
+
+    const decoded = decodePodcastStreamToken(token);
+    if (!decoded) return null;
+
+    const encodedUrlMatch = decoded.match(/https?%3A%2F%2F[^\s"']+/i);
+    if (encodedUrlMatch?.[0]) {
+      try {
+        return decodeURIComponent(encodedUrlMatch[0]);
+      } catch {
+        return null;
+      }
+    }
+
+    const plainUrlMatch = decoded.match(/https?:\/\/[^\s"']+/i);
+    if (plainUrlMatch?.[0]) return plainUrlMatch[0];
+    return null;
+  } catch {
+    return null;
+  }
 };
 
 const trackKeyOfSong = (song: Song): string => {
@@ -523,6 +573,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => !localStorage.getItem(ONBOARDING_SEEN_KEY));
   const [authError, setAuthError] = useState('');
+  const [authCallback, setAuthCallback] = useState<AuthCallbackResult | null>(() => getInitialAuthCallbackResult());
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [playerError, setPlayerError] = useState('');
   const [profileStats, setProfileStats] = useState<ApiProfileStats>({ friends: 0, tracks: 0, likes: 0, playlists: 0 });
@@ -662,21 +713,33 @@ export default function App() {
         contentType: probe.headers.get('content-type'),
       });
       if (!probe.ok) {
-        const maybeRefreshed = await resolveFreshPodcastSong(playbackSong);
-        if (maybeRefreshed) {
-          playbackSong = maybeRefreshed;
-          streamUrl = resolveStreamUrl(playbackSong);
-          if (streamUrl) {
+        const directFallbackUrl = extractDirectPodcastUrlFromProxy(streamUrl);
+        if (directFallbackUrl) {
+          playbackSong = { ...playbackSong, streamUrl: directFallbackUrl };
+          streamUrl = directFallbackUrl;
+          selectSongInPlayer(playbackSong);
+        } else {
+          const maybeRefreshed = await resolveFreshPodcastSong(playbackSong);
+          if (maybeRefreshed) {
+            playbackSong = maybeRefreshed;
+            streamUrl = resolveStreamUrl(playbackSong);
+            if (!streamUrl) {
+              setPlayerError('Поток недоступен');
+              setIsPlaying(false);
+              return;
+            }
+
+            const refreshedDirectFallbackUrl = extractDirectPodcastUrlFromProxy(streamUrl);
+            if (refreshedDirectFallbackUrl) {
+              playbackSong = { ...playbackSong, streamUrl: refreshedDirectFallbackUrl };
+              streamUrl = refreshedDirectFallbackUrl;
+            }
             selectSongInPlayer(playbackSong);
           } else {
             setPlayerError('Поток недоступен');
             setIsPlaying(false);
             return;
           }
-        } else {
-          setPlayerError('Поток недоступен');
-          setIsPlaying(false);
-          return;
         }
       }
     } catch (err) {
@@ -921,7 +984,7 @@ export default function App() {
     if (!token || !isPlaying || !currentBackendSongId) return;
     const timer = setInterval(() => {
       void touchNowPlayingOnBackend();
-    }, 15000);
+    }, NOW_PLAYING_HEARTBEAT_MS);
     return () => clearInterval(timer);
   }, [token, isPlaying, currentBackendSongId]);
 
@@ -963,6 +1026,12 @@ export default function App() {
   const completeOnboarding = () => {
     localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
     setShowOnboarding(false);
+  };
+
+  const startSocialAuth = (provider: SocialProvider) => {
+    const target = isNativeApp() ? buildNativeSocialCallbackTarget() : buildSocialCallbackTarget();
+    const startUrl = `${API_BASE}/auth/${provider}/start?origin=${encodeURIComponent(target)}`;
+    window.location.assign(startUrl);
   };
 
   useEffect(() => {
@@ -1099,6 +1168,11 @@ export default function App() {
   useEffect(() => {
     let handle: { remove: () => Promise<void> } | null = null;
     void listenForAppUrls((url) => {
+      const authResult = parseAuthCallbackResult(url);
+      if (authResult) {
+        setAuthCallback(authResult);
+        return;
+      }
       const request = parseWidgetOpenRequest(url);
       if (request) setPendingWidgetRequest(request);
     }).then((listener) => {
@@ -1108,6 +1182,27 @@ export default function App() {
       void handle?.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (!authCallback) return;
+    if (authCallback.error) {
+      setAuthError(decodeURIComponent(authCallback.error));
+      setAuthCallback(null);
+      clearHandledAuthParams();
+      return;
+    }
+    if (!authCallback.accessToken) return;
+
+    localStorage.setItem(AUTH_STORAGE_KEY, authCallback.accessToken);
+    localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
+    setShowOnboarding(false);
+    setAuthError('');
+    setCurrentUser(null);
+    setAuthReady(false);
+    setToken(authCallback.accessToken);
+    setAuthCallback(null);
+    clearHandledAuthParams();
+  }, [authCallback]);
 
   const loadFriends = async (accessToken: string, options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -1639,7 +1734,7 @@ export default function App() {
       } catch {
         // noop
       }
-      if (!stop) setTimeout(poll, 3500);
+      if (!stop) setTimeout(poll, SESSION_POLL_INTERVAL_MS);
     };
     void poll();
     return () => {
@@ -1652,11 +1747,11 @@ export default function App() {
     if (isDemoMode) return;
     let stop = false;
     const tick = async () => {
-      let nextDelay = 2500;
+      let nextDelay = SESSION_POLL_INTERVAL_MS;
       try {
         const session = await apiRequest<ApiSession | null>('/listen/active', {}, token);
         setActiveSession(session);
-        if (session) nextDelay = 1200;
+        if (session) nextDelay = 800;
         if (!session) {
           setListeningWith(null);
           setSessionMessages([]);
@@ -2028,6 +2123,7 @@ export default function App() {
       <AuthScreen
         error={authError}
         onSubmit={submitAuth}
+        onStartSocialAuth={startSocialAuth}
         onDemo={enterDemoMode}
       />
     );
@@ -2060,7 +2156,6 @@ export default function App() {
           <DiscoverScreen
             token={token}
             isDemoMode={isDemoMode}
-            likedTrackKeys={likedTrackKeys}
             deviceNowPlayingSupported={deviceNowPlayingSupported}
             deviceNowPlayingAccessGranted={deviceNowPlayingAccessGranted}
             deviceNowPlayingTrack={deviceNowPlayingTrack}
@@ -2070,7 +2165,6 @@ export default function App() {
             deviceNowPlayingError={deviceNowPlayingError}
             onOpenDeviceAccessSettings={() => void openDeviceAccessSettings()}
             onRefreshDeviceNowPlaying={() => void refreshDeviceNowPlaying()}
-            onToggleLike={toggleLike}
             onPlay={(s, queue, index) => playSong(s, undefined, queue, index)}
             onEnqueue={enqueueSong}
             onShare={(s) => setShareModal(s)}
@@ -2089,7 +2183,6 @@ export default function App() {
             onUploadTrack={uploadTrack}
             onUpdateTag={updateMyTag}
             onPlay={(s) => playSong(s)}
-            onEnqueue={enqueueSong}
           />
         )}
       </motion.div>
@@ -2195,7 +2288,6 @@ export default function App() {
               setFriendProfile(null);
               playSong(song, friendProfile);
             }}
-            onEnqueue={enqueueSong}
             onAddSong={addFriendSongToLibrary}
           />
         )}
@@ -2294,10 +2386,12 @@ function OnboardingScreen({ onContinue, onDemo }: { onContinue: () => void; onDe
 /* ========== AUTH ========== */
 function AuthScreen({
   onSubmit,
+  onStartSocialAuth,
   onDemo,
   error,
 }: {
   onSubmit: (mode: AuthMode, email: string, password: string, name?: string) => Promise<void>;
+  onStartSocialAuth: (provider: SocialProvider) => void;
   onDemo: () => void;
   error: string;
 }) {
@@ -2328,7 +2422,18 @@ function AuthScreen({
       >
         <img src="/logo.png" alt="MATCH" className="auth-logo" />
         <h2>{mode === 'login' ? 'Вход' : 'Регистрация'}</h2>
-        <p>Войдите по почте и паролю</p>
+        <p>Войдите по почте, Google или Яндекс ID</p>
+
+        <div className="auth-socials">
+          <button className="auth-social-btn google" type="button" onClick={() => onStartSocialAuth('google')} disabled={submitting}>
+            Войти через Google
+          </button>
+          <button className="auth-social-btn yandex" type="button" onClick={() => onStartSocialAuth('yandex')} disabled={submitting}>
+            Войти через Яндекс ID
+          </button>
+        </div>
+
+        <div className="auth-divider"><span>или</span></div>
 
         <div className="auth-tabs">
           <button className={`auth-tab ${mode === 'login' ? 'active' : ''}`} onClick={() => setMode('login')}>Вход</button>
@@ -2467,7 +2572,6 @@ function FriendProfileModal({
   likedTrackKeys,
   onClose,
   onPlay,
-  onEnqueue,
   onAddSong,
 }: {
   friend: Friend;
@@ -2477,7 +2581,6 @@ function FriendProfileModal({
   likedTrackKeys: Set<string>;
   onClose: () => void;
   onPlay: (song: Song) => void;
-  onEnqueue: (song: Song) => void;
   onAddSong: (song: Song) => Promise<boolean>;
 }) {
   const [savingTrackKey, setSavingTrackKey] = useState<string | null>(null);
@@ -2553,13 +2656,6 @@ function FriendProfileModal({
                     <p>{song.artist} · {song.duration}</p>
                   </div>
                   <button
-                    className="icon-btn glass-btn-sm"
-                    onClick={() => onEnqueue(song)}
-                    title="Добавить в очередь"
-                  >
-                    <Plus size={16} />
-                  </button>
-                  <button
                     className="profile-avatar-btn friend-save-btn"
                     onClick={() => void handleAddSong(song)}
                     disabled={saved || saving}
@@ -2602,6 +2698,7 @@ function FriendsScreen({
   const [friendName, setFriendName] = useState('');
   const [suggestions, setSuggestions] = useState<ApiUser[]>([]);
   const [searching, setSearching] = useState(false);
+  const friendInputRef = useRef<HTMLInputElement | null>(null);
 
   const submitAddFriend = async () => {
     const trimmed = friendName.trim();
@@ -2609,6 +2706,15 @@ function FriendsScreen({
     await onAddFriend(trimmed);
     setFriendName('');
     setSuggestions([]);
+  };
+
+  const openAddFriendsCta = () => {
+    if (!friendName.trim()) setFriendName('@');
+    requestAnimationFrame(() => {
+      friendInputRef.current?.focus();
+      const valueLength = friendInputRef.current?.value.length ?? 0;
+      friendInputRef.current?.setSelectionRange(valueLength, valueLength);
+    });
   };
 
   useEffect(() => {
@@ -2639,6 +2745,7 @@ function FriendsScreen({
     <>
       <div className="add-friend-row glass-inset">
         <input
+          ref={friendInputRef}
           placeholder="Добавить друга по @тегу"
           value={friendName}
           onChange={(e) => setFriendName(e.target.value)}
@@ -2690,6 +2797,17 @@ function FriendsScreen({
             <span className="story-name">{f.name.split(' ')[0]}</span>
           </div>
         ))}
+        <button
+          type="button"
+          className="story-item story-item-cta"
+          onClick={openAddFriendsCta}
+          aria-label="Найти и добавить друзей"
+        >
+          <div className="story-ring story-cta-ring">
+            <div className="story-cta-icon"><Plus size={18} strokeWidth={2.6} /></div>
+          </div>
+          <span className="story-name">Найти друзей</span>
+        </button>
       </div>
 
       {!loading && friends.length === 0 && (
@@ -2746,7 +2864,6 @@ function FriendsScreen({
 function DiscoverScreen({
   token,
   isDemoMode,
-  likedTrackKeys,
   deviceNowPlayingSupported,
   deviceNowPlayingAccessGranted,
   deviceNowPlayingTrack,
@@ -2756,14 +2873,12 @@ function DiscoverScreen({
   deviceNowPlayingError,
   onOpenDeviceAccessSettings,
   onRefreshDeviceNowPlaying,
-  onToggleLike,
   onPlay,
   onEnqueue,
   onShare,
 }: {
   token: string;
   isDemoMode: boolean;
-  likedTrackKeys: Set<string>;
   deviceNowPlayingSupported: boolean;
   deviceNowPlayingAccessGranted: boolean;
   deviceNowPlayingTrack: DeviceNowPlayingTrack | null;
@@ -2773,35 +2888,12 @@ function DiscoverScreen({
   deviceNowPlayingError: string;
   onOpenDeviceAccessSettings: () => void;
   onRefreshDeviceNowPlaying: () => void;
-  onToggleLike: (song: Song) => Promise<boolean>;
   onPlay: (s: Song, queue?: Song[], index?: number) => void;
   onEnqueue: (song: Song) => void;
   onShare: (s: Song) => void;
 }) {
-<<<<<<< HEAD
-  type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string };
-  const [section, setSection] = useState<'music' | 'podcasts'>('music');
-=======
   type DiscoverItem = Song & { isPodcast?: boolean; externalUrl?: string; podcastId?: string };
-  const TRACK_TAG_QUERY_MAP: Record<string, string> = {
-    'Поп': 'pop hits',
-    'Рок': 'rock hits',
-    'Хип-хоп': 'hip hop',
-    'R&B': 'r&b',
-    'Электроника': 'electronic',
-    'Инди': 'indie',
-  };
-  const PODCAST_TAG_QUERY_MAP: Record<string, string> = {
-    'Технологии': 'technology podcast',
-    'Стартапы': 'startup podcast',
-    'Интервью': 'interview podcast',
-    'Карьера': 'career podcast',
-    'Психология': 'psychology podcast',
-    'Бизнес': 'business podcast',
-  };
   const [mode, setMode] = useState<'tracks' | 'podcasts'>('tracks');
-  const [activeTag, setActiveTag] = useState('');
->>>>>>> main
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [remoteSongs, setRemoteSongs] = useState<DiscoverItem[]>([]);
@@ -2818,17 +2910,11 @@ function DiscoverScreen({
   useEffect(() => {
     setRemoteSongs([]);
     setHasRemoteLoaded(false);
-<<<<<<< HEAD
-  }, [section]);
-=======
     setShowAll(false);
-    setActiveTag('');
   }, [mode]);
->>>>>>> main
 
   useEffect(() => {
     setShowAll(false);
-    setActiveTag('');
   }, [query]);
 
   const openPodcastEpisodes = async (podcast: DiscoverItem) => {
@@ -2882,13 +2968,7 @@ function DiscoverScreen({
       return;
     }
     const trimmed = query.trim();
-<<<<<<< HEAD
-    const effectiveQuery = trimmed.length >= 2 ? trimmed : section === 'podcasts' ? 'top podcasts' : 'top hits';
-=======
-    const effectiveTagQuery = activeTag
-      ? (mode === 'podcasts' ? PODCAST_TAG_QUERY_MAP[activeTag] : TRACK_TAG_QUERY_MAP[activeTag]) || activeTag
-      : '';
-    const effectiveQuery = effectiveTagQuery || (trimmed.length >= 2 ? trimmed : mode === 'podcasts' ? 'top podcasts' : 'top hits');
+    const effectiveQuery = trimmed.length >= 2 ? trimmed : mode === 'podcasts' ? 'top podcasts' : 'top hits';
     const cacheKey = `${mode}::${effectiveQuery.toLowerCase()}`;
     const cached = searchCacheRef.current.get(cacheKey);
     if (cached && Date.now() - cached.ts < SEARCH_CACHE_TTL_MS) {
@@ -2897,14 +2977,13 @@ function DiscoverScreen({
       setHasRemoteLoaded(true);
       return;
     }
->>>>>>> main
 
     let cancelled = false;
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
         let mapped: DiscoverItem[] = [];
-        if (section === 'podcasts') {
+        if (mode === 'podcasts') {
           const accessToken = isDemoMode ? undefined : token;
           const results = await apiRequest<ApiPodcastSearchItem[]>(
             `/podcasts/search?q=${encodeURIComponent(effectiveQuery)}&limit=20`,
@@ -2950,7 +3029,7 @@ function DiscoverScreen({
         }
         const msg = err instanceof Error ? err.message : '';
         if (!msg.includes('401')) {
-          console.warn(section === 'podcasts' ? 'Podcasts search failed' : 'YTM search failed', err);
+          console.warn(mode === 'podcasts' ? 'Podcasts search failed' : 'YTM search failed', err);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -2961,22 +3040,14 @@ function DiscoverScreen({
       cancelled = true;
       clearTimeout(timer);
     };
-<<<<<<< HEAD
-  }, [query, token, isDemoMode, section]);
-=======
-  }, [query, token, isDemoMode, mode, activeTag]);
->>>>>>> main
+  }, [query, token, isDemoMode, mode]);
 
   const fallbackList: DiscoverItem[] =
-    section === 'podcasts'
+    mode === 'podcasts'
       ? PODCASTS.map((item) => ({ ...item, isPodcast: true }))
       : SONGS.map((item) => ({ ...item, isPodcast: false }));
   const list = hasRemoteLoaded ? remoteSongs : fallbackList;
-<<<<<<< HEAD
-=======
   const visibleList = showAll ? list : list.slice(0, 8);
-  const tags = mode === 'podcasts' ? PODCAST_TAGS : TRENDING_TAGS;
->>>>>>> main
 
   return (
     <>
@@ -3057,54 +3128,34 @@ function DiscoverScreen({
       </div>
 
       <div className="tag-row">
-        <button className={`tag-chip ${section === 'music' ? 'active' : ''}`} onClick={() => setSection('music')}>Музыка</button>
-        <button className={`tag-chip ${section === 'podcasts' ? 'active' : ''}`} onClick={() => setSection('podcasts')}>Подкасты</button>
+        <button className={`tag-chip ${mode === 'tracks' ? 'active' : ''}`} onClick={() => setMode('tracks')}>Музыка</button>
+        <button className={`tag-chip ${mode === 'podcasts' ? 'active' : ''}`} onClick={() => setMode('podcasts')}>Подкасты</button>
       </div>
 
       <div className="search-bar glass-inset">
         <Search size={18} />
         <input
-          placeholder={section === 'podcasts' ? 'Поиск подкастов...' : 'Поиск треков и артистов...'}
+          placeholder={mode === 'podcasts' ? 'Поиск подкастов...' : 'Поиск треков и артистов...'}
           value={query}
-          onChange={(e) => {
-            setActiveTag('');
-            setQuery(e.target.value);
-          }}
+          onChange={(e) => setQuery(e.target.value)}
         />
       </div>
       {loading && (
-        <div className="search-status">{section === 'podcasts' ? 'Ищем подкасты...' : 'Ищем треки в каталоге...'}</div>
+        <div className="search-status">{mode === 'podcasts' ? 'Ищем подкасты...' : 'Ищем треки в каталоге...'}</div>
       )}
       {!loading && query.trim().length < 2 && list.length > 0 && (
-        <div className="search-status">{section === 'podcasts' ? 'Популярные подкасты' : 'Подборка Match'}</div>
+        <div className="search-status">{mode === 'podcasts' ? 'Популярные подкасты' : 'Подборка Match'}</div>
       )}
       {!loading && list.length === 0 && (
         <div className="search-status">Ничего не найдено</div>
       )}
-<<<<<<< HEAD
       <div className="section-header">
-        <h3 className="section-title">{section === 'music' ? 'Музыка' : 'Подкасты'}</h3>
-        <button className="section-more">Ещё <ChevronRight size={16} /></button>
-=======
-      <div className="tag-row">
-        {tags.map((tag) => (
-          <button
-            className={`tag-chip ${activeTag === tag ? 'active' : ''}`}
-            key={tag}
-            onClick={() => setActiveTag((prev) => (prev === tag ? '' : tag))}
-          >
-            {tag}
-          </button>
-        ))}
-      </div>
-      <div className="section-header">
-        <h3 className="section-title">{mode === 'podcasts' ? 'Популярные подкасты' : 'В тренде'}</h3>
+        <h3 className="section-title">{mode === 'podcasts' ? 'Подкасты' : 'Музыка'}</h3>
         {list.length > 8 && (
           <button className="section-more" onClick={() => setShowAll((v) => !v)}>
             {showAll ? 'Свернуть' : 'Ещё'} <ChevronRight size={16} />
           </button>
         )}
->>>>>>> main
       </div>
       {visibleList.map((song, idx) => (
         <div className="trending-item" key={song.id}>
@@ -3133,30 +3184,11 @@ function DiscoverScreen({
             <p>{song.artist} · {song.duration}</p>
           </div>
           {song.isPodcast ? (
-<<<<<<< HEAD
-            <>
-              <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
-              <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
-              <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
-                <Play size={14} fill="#fff" />
-              </button>
-            </>
-=======
             <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => void openPodcastEpisodes(song)} title="Выбрать выпуск">
               <Play size={14} fill="#fff" />
             </button>
->>>>>>> main
           ) : (
             <>
-              <motion.button
-                className="icon-btn glass-btn-sm"
-                onClick={() => void onToggleLike(song)}
-                animate={likedTrackKeys.has(trackKeyOfSong(song)) ? { scale: [1, 1.18, 1] } : { scale: 1 }}
-                transition={{ duration: 0.28 }}
-              >
-                <Heart size={16} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
-              </motion.button>
-              <button className="icon-btn glass-btn-sm" onClick={() => onEnqueue(song)}><Plus size={16} /></button>
               <button className="icon-btn glass-btn-sm" onClick={() => onShare(song)}><Share2 size={16} /></button>
               <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={() => onPlay(song, list, idx)}>
                 <Play size={14} fill="#fff" />
@@ -3535,7 +3567,6 @@ function ProfileScreen({
   onUploadTrack,
   onUpdateTag,
   onPlay,
-  onEnqueue,
 }: {
   currentUser: ApiUser;
   stats: ApiProfileStats;
@@ -3547,7 +3578,6 @@ function ProfileScreen({
   onUploadTrack: (file: File) => Promise<Song>;
   onUpdateTag: (tag: string) => Promise<void>;
   onPlay: (song: Song) => void;
-  onEnqueue: (song: Song) => void;
 }) {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const trackInputRef = useRef<HTMLInputElement | null>(null);
@@ -3671,12 +3701,6 @@ function ProfileScreen({
           >
             <Heart size={18} color={likedTrackKeys.has(trackKeyOfSong(song)) ? 'var(--orange-main)' : 'currentColor'} />
           </motion.button>
-          <button className="icon-btn glass-btn-sm" onClick={(e) => {
-            e.stopPropagation();
-            onEnqueue(song);
-          }}>
-            <Plus size={16} />
-          </button>
           <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
             e.stopPropagation();
             onPlay(song);
@@ -3691,12 +3715,6 @@ function ProfileScreen({
         <div className="trending-item" key={song.id} onClick={() => onPlay(song)}>
           <img src={song.cover} alt="" />
           <div className="trending-info"><h4>{song.title}</h4><p>{song.artist} · {song.duration}</p></div>
-          <button className="icon-btn glass-btn-sm" onClick={(e) => {
-            e.stopPropagation();
-            onEnqueue(song);
-          }}>
-            <Plus size={16} />
-          </button>
           <button className="play-btn-sm" style={{ width: 32, height: 32 }} onClick={(e) => {
             e.stopPropagation();
             onPlay(song);
@@ -4088,6 +4106,33 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
           )}
         </div>
 
+        {/* ===== INLINE CHAT SECTION ===== */}
+        {listeningWith && sessionActive && (
+          <div className="np-chat-section">
+            <div className="np-chat-header">
+              <img src={listeningWith.avatar} alt="" />
+              <div>
+                <h4>Чат с {listeningWith.name}</h4>
+                <p>Слушаете вместе</p>
+              </div>
+            </div>
+
+            <div className="np-chat-messages">
+              {sessionMessages.map((msg) => (
+                <div key={msg.id} className={`np-chat-bubble ${msg.sender_id === currentUserId ? 'sent' : 'received'}`}>
+                  {msg.text}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(!listeningWith || !sessionActive) && (
+          <div className="np-no-session">
+            <p>Нажмите на трек друга, чтобы слушать вместе</p>
+          </div>
+        )}
+
         <div className="np-queue-section">
           <div className="np-queue-header">
             <h4>Очередь</h4>
@@ -4130,33 +4175,6 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
             })}
           </div>
         </div>
-
-        {/* ===== INLINE CHAT SECTION ===== */}
-        {listeningWith && sessionActive && (
-          <div className="np-chat-section">
-            <div className="np-chat-header">
-              <img src={listeningWith.avatar} alt="" />
-              <div>
-                <h4>Чат с {listeningWith.name}</h4>
-                <p>Слушаете вместе</p>
-              </div>
-            </div>
-
-            <div className="np-chat-messages">
-              {sessionMessages.map((msg) => (
-                <div key={msg.id} className={`np-chat-bubble ${msg.sender_id === currentUserId ? 'sent' : 'received'}`}>
-                  {msg.text}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {(!listeningWith || !sessionActive) && (
-          <div className="np-no-session">
-            <p>Нажмите на трек друга, чтобы слушать вместе</p>
-          </div>
-        )}
       </div>
 
       {/* Fixed chat input at bottom */}
