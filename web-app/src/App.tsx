@@ -1561,7 +1561,10 @@ export default function App() {
             token={token}
             currentUserId={currentUser.id}
             onClose={() => setOpenChat(null)}
-            onPlay={(s) => playSong(s)}
+            onPlay={(s) => {
+              playSong(s);
+              setNpOpen(true);
+            }}
             onThreadActivity={(friendId, lastMessage, unread) => updateThreadPreview(friendId, lastMessage, unread)}
           />
         )}
