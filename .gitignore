@@ -5,6 +5,7 @@
 /photos/
 /Frame 1597880375.png
 /_env
+/_env*
 
 # Frontend
 web-app/node_modules/
