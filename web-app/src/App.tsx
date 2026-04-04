@@ -100,8 +100,6 @@ const AVATAR_POOL = ['/avatars/danya.jpg', '/avatars/oleg.jpg', '/avatars/aleksa
 const LAST_ACTIVE_POOL = ['Только что', '2 мин назад', '10 мин назад', '1 ч назад'];
 const FRIENDS_POLL_INTERVAL_MS = 1_000;
 const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 1_000;
-const FRIENDS_POLL_INTERVAL_MS = 12_000;
-const FRIENDS_POLL_HIDDEN_INTERVAL_MS = 30_000;
 const DEMO_USER: ApiUser = { id: 0, name: 'Demo User', email: 'demo@match.app', tag: 'demo', avatar_url: '/avatars/user.jpg' };
 
 const toUsername = (name: string) =>
