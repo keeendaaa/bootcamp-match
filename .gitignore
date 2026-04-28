@@ -13,6 +13,7 @@ web-app/dist/
 web-app/.env
 web-app/.env.*
 !web-app/.env.example
+!web-app/.env.production
 
 # Backend
 CU-weekend-2026/.venv/

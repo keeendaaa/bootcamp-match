@@ -40,6 +40,15 @@ npm run dev
 
 Открой `http://localhost:5173`. API будет доступен на `http://localhost:8000`, healthcheck — `http://localhost:8000/health`.
 
+## Скриншоты
+
+<p align="center">
+  <img src="web-app/readme-photos/home-screen.png" alt="Home Screen" width="24%" />
+  <img src="web-app/readme-photos/image.png" alt="Friends Feed" width="24%" />
+  <img src="web-app/readme-photos/screen-opens.png" alt="Discover" width="24%" />
+  <img src="web-app/readme-photos/profile.png" alt="Profile" width="24%" />
+</p>
+
 ## Что Нужно Установить
 
 Минимальный набор:
@@ -87,6 +96,7 @@ Frontend:
 - React-приложение ходит в API по `VITE_API_BASE_URL`.
 - Если переменная не задана, frontend использует production API `https://matchapp.site/api`.
 - Для локальной разработки нужен `VITE_API_BASE_URL=http://localhost:8000` или `http://localhost:8000/api`, если API проксируется с префиксом.
+- Для Vercel можно включить `VITE_AUTO_DEMO=true`, тогда при открытии сайта приложение сразу запустит существующий демо-режим без экрана входа и без backend.
 
 Backend:
 
@@ -113,12 +123,20 @@ Production сейчас обычно выглядит так:
 
 ```env
 VITE_API_BASE_URL=http://localhost:8000
+VITE_AUTO_DEMO=false
 ```
 
 Для production на Vercel чаще всего нужно:
 
 ```env
 VITE_API_BASE_URL=https://api.example.com
+VITE_AUTO_DEMO=false
+```
+
+Если VPS удаляется и нужен только публичный демо-показ на Vercel:
+
+```env
+VITE_AUTO_DEMO=true
 ```
 
 Подсказки:
@@ -398,6 +416,17 @@ ss -tulpn
 
 Можно вынести только frontend на Vercel, а backend оставить на VPS.
 
+Для безопасного демо без VPS используй отдельную ветку `vercel-demo`. В ней лежит `web-app/.env.production` с `VITE_AUTO_DEMO=true`, поэтому Vercel-сборка сразу откроет встроенный демо-режим без экрана входа, backend и PostgreSQL.
+
+Рекомендуемый вариант для этого репозитория:
+
+- Branch: `vercel-demo`
+- Root Directory: `web-app`
+- Install Command: `npm ci`
+- Build Command: `npm run build`
+- Output Directory: `dist`
+- Дополнительные Environment Variables не обязательны для демо
+
 Настройки Vercel:
 
 - Root Directory: `web-app`
@@ -405,6 +434,7 @@ ss -tulpn
 - Build Command: `npm run build`
 - Output Directory: `dist`
 - Environment Variable: `VITE_API_BASE_URL=https://api.example.com`
+- Для демо без VPS поставь Environment Variable: `VITE_AUTO_DEMO=true`
 
 Что важно:
 
@@ -412,6 +442,7 @@ ss -tulpn
 - Для API лучше использовать отдельный поддомен: `api.example.com`.
 - Если backend остаётся за nginx на VPS, настрой CORS или отдавай API с того же домена через proxy.
 - Не размещай PostgreSQL на Vercel: для базы используй VPS, Supabase, Neon, Railway или другой managed Postgres.
+- Если включён `VITE_AUTO_DEMO=true`, backend не нужен: сайт сразу откроет встроенный демо-режим на моковых данных.
 
 ## Частые Проблемы
 
@@ -474,12 +505,3 @@ git diff --stat
 - `Backend - uvicorn dev` запускает FastAPI локально через Python module `uvicorn`.
 
 После клона открой корень репозитория в WebStorm/PyCharm/IntelliJ. IDE должна увидеть Git mapping, исключить `node_modules`, `dist`, `.venv`, `uploads` и предложить удобные команды запуска.
-
-## Скриншоты
-
-<p align="center">
-  <img src="web-app/readme-photos/home-screen.png" alt="Home Screen" width="24%" />
-  <img src="web-app/readme-photos/image.png" alt="Friends Feed" width="24%" />
-  <img src="web-app/readme-photos/screen-opens.png" alt="Discover" width="24%" />
-  <img src="web-app/readme-photos/profile.png" alt="Profile" width="24%" />
-</p>
