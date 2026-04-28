@@ -40,6 +40,15 @@ npm run dev
 
 Открой `http://localhost:5173`. API будет доступен на `http://localhost:8000`, healthcheck — `http://localhost:8000/health`.
 
+## Скриншоты
+
+<p align="center">
+  <img src="web-app/readme-photos/home-screen.png" alt="Home Screen" width="24%" />
+  <img src="web-app/readme-photos/image.png" alt="Friends Feed" width="24%" />
+  <img src="web-app/readme-photos/screen-opens.png" alt="Discover" width="24%" />
+  <img src="web-app/readme-photos/profile.png" alt="Profile" width="24%" />
+</p>
+
 ## Что Нужно Установить
 
 Минимальный набор:
@@ -398,6 +407,16 @@ ss -tulpn
 
 Можно вынести только frontend на Vercel, а backend оставить на VPS.
 
+Если VPS удаляется и нужен публичный демо-показ без backend, используй отдельную ветку `vercel-demo`. Она не меняет `main` и содержит Vercel-сборку, которая сразу открывает встроенный демо-режим.
+
+Рекомендуемый Vercel-деплой для демо:
+
+- Branch: `vercel-demo`
+- Root Directory: `web-app`
+- Install Command: `npm ci`
+- Build Command: `npm run build`
+- Output Directory: `dist`
+
 Настройки Vercel:
 
 - Root Directory: `web-app`
@@ -474,12 +493,3 @@ git diff --stat
 - `Backend - uvicorn dev` запускает FastAPI локально через Python module `uvicorn`.
 
 После клона открой корень репозитория в WebStorm/PyCharm/IntelliJ. IDE должна увидеть Git mapping, исключить `node_modules`, `dist`, `.venv`, `uploads` и предложить удобные команды запуска.
-
-## Скриншоты
-
-<p align="center">
-  <img src="web-app/readme-photos/home-screen.png" alt="Home Screen" width="24%" />
-  <img src="web-app/readme-photos/image.png" alt="Friends Feed" width="24%" />
-  <img src="web-app/readme-photos/screen-opens.png" alt="Discover" width="24%" />
-  <img src="web-app/readme-photos/profile.png" alt="Profile" width="24%" />
-</p>
