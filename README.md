@@ -505,3 +505,26 @@ git diff --stat
 - `Backend - uvicorn dev` запускает FastAPI локально через Python module `uvicorn`.
 
 После клона открой корень репозитория в WebStorm/PyCharm/IntelliJ. IDE должна увидеть Git mapping, исключить `node_modules`, `dist`, `.venv`, `uploads` и предложить удобные команды запуска.
+
+## Vercel MCP
+
+В проект добавлен Cursor MCP-конфиг `.cursor/mcp.json` для официального Vercel MCP:
+
+```json
+{
+  "mcpServers": {
+    "vercel": {
+      "url": "https://mcp.vercel.com"
+    }
+  }
+}
+```
+
+Как подключить:
+
+- Открой проект в Cursor.
+- Cursor увидит сервер `vercel` и покажет `Needs login`.
+- Нажми login и пройди OAuth-авторизацию Vercel.
+- После этого AI-клиент сможет смотреть проекты, деплои и логи Vercel через MCP.
+
+Для других клиентов можно подключить тот же endpoint вручную: `https://mcp.vercel.com`.
