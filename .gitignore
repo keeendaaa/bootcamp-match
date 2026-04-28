@@ -12,12 +12,14 @@ web-app/node_modules/
 web-app/dist/
 web-app/.env
 web-app/.env.*
+!web-app/.env.example
 
 # Backend
 CU-weekend-2026/.venv/
 CU-weekend-2026/uploads/
 CU-weekend-2026/.env
 CU-weekend-2026/.env.*
+!CU-weekend-2026/.env.example
 
 # Python
 **/__pycache__/

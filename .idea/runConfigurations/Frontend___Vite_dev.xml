@@ -1,0 +1,14 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Frontend - Vite dev" type="js.build_tools.npm" folderName="Frontend">
+    <package-json value="$PROJECT_DIR$/web-app/package.json" />
+    <command value="run" />
+    <scripts>
+      <script value="dev" />
+    </scripts>
+    <node-interpreter value="project" />
+    <envs>
+      <env name="VITE_API_BASE_URL" value="http://localhost:8000" />
+    </envs>
+    <method v="2" />
+  </configuration>
+</component>

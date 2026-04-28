@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Fullstack - local dev" type="CompoundRunConfigurationType" folderName="Fullstack">
+    <toRun name="Backend - Docker Compose" type="docker-deploy" />
+    <toRun name="Frontend - Vite dev" type="js.build_tools.npm" />
+    <method v="2" />
+  </configuration>
+</component>

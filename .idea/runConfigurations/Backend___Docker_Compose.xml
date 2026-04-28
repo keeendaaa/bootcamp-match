@@ -1,0 +1,18 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Backend - Docker Compose" type="docker-deploy" factoryName="docker-compose.yml" server-name="Docker" folderName="Backend">
+    <deployment type="docker-compose.yml">
+      <settings>
+        <option name="sourceFilePath" value="CU-weekend-2026/docker-compose.yml" />
+        <option name="envFilePath" value="CU-weekend-2026/.env" />
+        <option name="projectName" value="bootcamp-match" />
+        <option name="services">
+          <list>
+            <option value="api" />
+            <option value="db" />
+          </list>
+        </option>
+      </settings>
+    </deployment>
+    <method v="2" />
+  </configuration>
+</component>

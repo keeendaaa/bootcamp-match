@@ -8,3 +8,7 @@
 /dataSources.local.xml
 # Editor-based HTTP Client requests
 /httpRequests/
+# Local IDE caches and secrets
+/nodejs.xml
+/dataSources.xml
+/aws.xml
