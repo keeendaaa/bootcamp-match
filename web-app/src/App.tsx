@@ -2637,7 +2637,9 @@ function ShareModal({
         await navigator.clipboard.writeText(text);
         alert('Скопировано в буфер! 📋');
       }
-    } catch {}
+    } catch {
+      // Sharing can fail when a user cancels the native sheet.
+    }
     onClose();
   };
 
@@ -4062,7 +4064,7 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
     ws.onmessage = (event) => {
       void (async () => {
         try {
-          const envelope = JSON.parse(event.data) as { from_user_id?: number; data?: any };
+          const envelope = JSON.parse(event.data) as { from_user_id?: number; data?: { type?: string; sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit } };
           if (envelope.from_user_id === currentUserId) return;
           const signal = envelope.data || {};
           const pc = ensurePeerConnection();
