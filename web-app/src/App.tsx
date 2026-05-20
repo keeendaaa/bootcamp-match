@@ -6,7 +6,7 @@ import {
   ChevronDown, Heart, Shuffle, Repeat,
   Share2, Send, ArrowLeft, Bell, LogOut,
   Plus, ChevronRight, RefreshCw,
-  Mic, MicOff, X
+  Mic, MicOff, X, Radio, Users, Music2, MessageSquare, Star, Activity, Smartphone
 } from 'lucide-react';
 import { SONGS, PODCASTS, FRIENDS, CHAT_THREADS, type Song, type Friend, type ChatMessage, type ChatThread } from './data/mockData';
 import { getNativePlatform, isNativeApp, listenForAppUrls } from './mobile/capacitor';
@@ -576,7 +576,7 @@ export default function App() {
   const [token, setToken] = useState<string>(() => localStorage.getItem(AUTH_STORAGE_KEY) || '');
   const [currentUser, setCurrentUser] = useState<ApiUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => !localStorage.getItem(ONBOARDING_SEEN_KEY));
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => !localStorage.getItem(AUTH_STORAGE_KEY));
   const [authError, setAuthError] = useState('');
   const [authCallback, setAuthCallback] = useState<AuthCallbackResult | null>(() => getInitialAuthCallbackResult());
   const [isLoadingData, setIsLoadingData] = useState(false);
@@ -2420,67 +2420,142 @@ function AppHeader({ tab, currentUser, onLogout }: { tab: Tab; currentUser: ApiU
 
 /* ========== ONBOARDING ========== */
 function OnboardingScreen({ onContinue, onDemo }: { onContinue: () => void; onDemo: () => void }) {
-  const slides = [
-    {
-      title: 'Это Match',
-      text: 'Социальный музыкальный сервис, где можно слушать вместе и знакомиться по вкусу.',
-    },
-    {
-      title: 'Слушайте синхронно',
-      text: 'Подключайтесь к эфиру друга, трек и время воспроизведения синхронизируются.',
-    },
-    {
-      title: 'Общайтесь в моменте',
-      text: 'Пишите в чат, делитесь треками и тестируйте функции без регистрации в демо-режиме.',
-    },
+  const liveFriends = FRIENDS.slice(0, 3);
+  const featureCards = [
+    { icon: Radio, title: 'Слушай вместе', text: 'Трек и позиция синхронизируются, будто вы сидите рядом.' },
+    { icon: MessageSquare, title: 'Реакция в моменте', text: 'Отправляй песню в чат и начинай разговор без неловкого вступления.' },
+    { icon: Activity, title: 'Живой статус', text: 'Друзья видят, что играет сейчас, а не вчерашний плейлист.' },
   ];
-  const [step, setStep] = useState(0);
-  const isLast = step === slides.length - 1;
 
   return (
     <div className="onboarding-shell">
-      <motion.div
-        className="onboarding-card glass-card"
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <img src="/logo.png" alt="MATCH" className="auth-logo" />
-        <div className="onboarding-progress">
-          {slides.map((_, idx) => (
-            <span key={idx} className={`dot ${idx === step ? 'active' : ''}`} />
-          ))}
-        </div>
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={step}
-            initial={{ opacity: 0, x: 14 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -14 }}
-            transition={{ duration: 0.2 }}
-          >
-            <h2>{slides[step].title}</h2>
-            <p>{slides[step].text}</p>
-          </motion.div>
-        </AnimatePresence>
+      <motion.div className="landing-orb landing-orb-one" animate={{ y: [0, -14, 0], x: [0, 10, 0] }} transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }} />
+      <motion.div className="landing-orb landing-orb-two" animate={{ y: [0, 18, 0], rotate: [0, 12, 0] }} transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut' }} />
 
-        <div className="onboarding-actions">
-          {!isLast && (
-            <button className="auth-submit" onClick={() => setStep((prev) => Math.min(slides.length - 1, prev + 1))}>
-              Далее
-            </button>
-          )}
-          {isLast && (
-            <>
-              <button className="auth-submit" onClick={onContinue}>
-                Войти / Регистрация
-              </button>
-              <button className="auth-submit" type="button" onClick={onDemo}>
-                Открыть тестовую версию
-              </button>
-            </>
-          )}
-        </div>
-      </motion.div>
+      <motion.header className="landing-nav" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
+        <img src="/logo.png" alt="MATCH" className="landing-logo" />
+        <button className="landing-nav-cta" onClick={onContinue}>Войти</button>
+      </motion.header>
+
+      <main className="landing-content">
+        <section className="landing-hero">
+          <motion.div
+            className="landing-copy"
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.42 }}
+          >
+            <span className="landing-kicker"><Radio size={15} /> музыка друзей в прямом эфире</span>
+            <h1>Музыка друзей прямо сейчас.</h1>
+            <p>
+              MATCH превращает музыку в социальную ленту: статусы друзей, совместное прослушивание,
+              чаты по трекам и быстрые реакции прямо из приложения.
+            </p>
+            <div className="landing-actions">
+              <button className="landing-primary" onClick={onContinue}>Создать профиль</button>
+              <button className="landing-secondary" type="button" onClick={onDemo}>Открыть демо</button>
+            </div>
+          </motion.div>
+
+          <motion.div
+            className="phone-showcase"
+            initial={{ opacity: 0, x: 20, rotate: 2 }}
+            animate={{ opacity: 1, x: 0, rotate: -1 }}
+            transition={{ type: 'spring', stiffness: 90, damping: 18 }}
+          >
+            <div className="phone-topbar">
+              <span>21:47</span>
+              <span className="phone-live"><span /> live</span>
+            </div>
+            <div className="now-card">
+              <img src={SONGS[0].cover} alt="" />
+              <div>
+                <span>Даня сейчас слушает</span>
+                <strong>{SONGS[0].title}</strong>
+                <small>{SONGS[0].artist}</small>
+              </div>
+            </div>
+            <div className="wave-card">
+              {Array.from({ length: 18 }).map((_, idx) => (
+                <motion.span
+                  key={idx}
+                  animate={{ scaleY: [0.35, 1, 0.45] }}
+                  transition={{ duration: 0.9 + idx * 0.025, repeat: Infinity, delay: idx * 0.035 }}
+                />
+              ))}
+            </div>
+            <div className="friend-stack">
+              {liveFriends.map((friend, idx) => (
+                <motion.div
+                  className="friend-pill"
+                  key={friend.id}
+                  initial={{ opacity: 0, x: 18 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.18 + idx * 0.08 }}
+                >
+                  <img src={friend.avatar} alt="" />
+                  <div>
+                    <strong>{friend.name}</strong>
+                    <span>{friend.currentSong?.title || 'готовит плейлист'}</span>
+                  </div>
+                  <Music2 size={16} />
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        </section>
+
+        <section className="landing-marquee" aria-label="Возможности MATCH">
+          <div>
+            <span>friends feed</span><span>sync listen</span><span>weekly taste</span><span>music chat</span>
+          </div>
+        </section>
+
+        <section className="landing-bento">
+          <motion.article className="bento-card bento-wide" whileTap={{ scale: 0.98 }}>
+            <div className="bento-icon"><Smartphone size={19} /></div>
+            <h2>Виджет, который хочется проверять</h2>
+            <p>Мини-экран с друзьями, обложками и моментальными входами в совместное прослушивание.</p>
+            <div className="mini-widget-preview">
+              {liveFriends.map((friend) => (
+                <img key={friend.id} src={friend.avatar} alt="" />
+              ))}
+              <span>+{FRIENDS.length * 7}</span>
+            </div>
+          </motion.article>
+          <motion.article className="bento-card bento-dark" whileTap={{ scale: 0.98 }}>
+            <Star size={20} />
+            <strong>4.82</strong>
+            <span>средний mood-match по друзьям</span>
+          </motion.article>
+          {featureCards.map((item, idx) => {
+            const Icon = item.icon;
+            return (
+              <motion.article
+                className="bento-card feature-card"
+                key={item.title}
+                initial={{ opacity: 0, y: 14 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.35 }}
+                transition={{ delay: idx * 0.06 }}
+              >
+                <Icon size={20} />
+                <h3>{item.title}</h3>
+                <p>{item.text}</p>
+              </motion.article>
+            );
+          })}
+        </section>
+
+        <section className="landing-social-proof">
+          <div>
+            <Users size={18} />
+            <strong>Друзья, треки, чаты</strong>
+            <span>Один экран, чтобы понять настроение компании сегодня.</span>
+          </div>
+          <button className="landing-primary" onClick={onContinue}>Начать</button>
+        </section>
+      </main>
     </div>
   );
 }
@@ -3393,7 +3468,7 @@ function ChatListScreen({ threads, onOpenChat }: { threads: ChatThread[]; onOpen
       {threads.map((thread) => {
         const lastMsg = thread.messages[thread.messages.length - 1];
         const preview = lastMsg?.songShare
-          ? '🎵 Поделился треком'
+          ? 'Поделился треком'
           : (lastMsg?.text?.trim() || 'Сообщений пока нет');
         return (
           <motion.div className="chat-item" key={thread.friend.id} onClick={() => onOpenChat(thread)} whileTap={{ scale: 0.98 }}>
@@ -3562,7 +3637,7 @@ function ChatDetail({
   const sendSong = async (song: Song) => {
     if (sending) return;
     if (isDemoChat) {
-      const next: ChatMessage = { id: Date.now(), senderId: currentUserId, text: `🎵 ${song.title}`, time: 'Сейчас', songShare: song };
+      const next: ChatMessage = { id: Date.now(), senderId: currentUserId, text: song.title, time: 'Сейчас', songShare: song };
       setMsgs((prev) => [...prev, next]);
       onThreadActivity(thread.friend.id, next, 0);
       setSongPicker(false);
@@ -3577,7 +3652,7 @@ function ChatDetail({
         {
           method: 'POST',
           body: JSON.stringify({
-            text: `🎵 ${song.title}`,
+            text: song.title,
             song: {
               title: song.title,
               artist: song.artist,
@@ -4125,7 +4200,7 @@ function NowPlayingFull({ song, isPlaying, currentTimeSec, durationSec, isLiked,
         <div style={{ textAlign: 'center', flex: 1 }}>
           <span className="np-label">Сейчас играет</span>
           {listeningWith && (
-            <p className="np-with">🎧 с {listeningWith.name}</p>
+            <p className="np-with">Слушаете с {listeningWith.name}</p>
           )}
         </div>
         <button className="np-icon-btn" onClick={onShare}><Share2 size={20} /></button>

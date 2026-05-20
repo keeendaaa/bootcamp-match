@@ -2,6 +2,25 @@
 
 Веб-приложение продолжает работать как Vite + React + TypeScript, а мобильная сборка делается как WebView-shell через Capacitor. Детали и шаги описаны в [MOBILE.md](./MOBILE.md).
 
+## UI Redesign Notes
+
+Текущий интерфейс оформлен как mobile-first музыкальное приложение в духе Apple Music/iOS:
+
+- `src/App.tsx` содержит основные экраны, player state, auth flow, friend profiles, chats, discover, profile и now-playing overlay.
+- `src/index.css` содержит дизайн-систему и визуальные слои приложения. Блок `APPLE MUSIC REDESIGN` переопределяет авторизованное приложение, не затрагивая публичный landing.
+- Публичный landing включается через `.onboarding-shell`; для него отдельно снято ограничение phone-frame на desktop через `body:has(.onboarding-shell)`.
+- Авторизованная часть сохраняет phone-frame app shell, floating bottom dock, mini-player, glass cards, Apple Music-like red/pink accent и темный fullscreen player.
+- Friend profile sheet имеет отдельный блок `FRIEND PROFILE SHEET FIX`, чтобы карточка друга и треки не наследовали стили пользовательского профиля.
+
+Проверка перед публикацией:
+
+```bash
+npm run build:web
+npm run lint
+```
+
+`npm run lint` сейчас может показывать существующие предупреждения `react-hooks/exhaustive-deps` в `src/App.tsx`; они не относятся к визуальному редизайну.
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

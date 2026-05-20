@@ -106,6 +106,8 @@ Frontend:
 - React-приложение ходит в API по `VITE_API_BASE_URL`.
 - Если переменная не задана, frontend использует production API `https://matchapp.site/api`.
 - Для локальной разработки нужен `VITE_API_BASE_URL=http://localhost:8000` или `http://localhost:8000/api`, если API проксируется с префиксом.
+- UI оформлен как mobile-first музыкальное приложение: публичный landing responsive на desktop/tablet, авторизованная часть в phone-frame shell с floating dock, mini-player, friend feed, discover, chats, profile и fullscreen now-playing.
+- Основные visual overrides лежат в `web-app/src/index.css` в блоках `ONBOARDING`, `APPLE MUSIC REDESIGN` и `FRIEND PROFILE SHEET FIX`.
 
 Backend:
 
